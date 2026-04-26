@@ -898,7 +898,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  OutlinedButton(
+                  FilledButton(
                     onPressed: () {
                       final msg = '''Namaste $safeApplicantName 👋
 
@@ -930,7 +930,7 @@ Team Doorsy''';
                     ),
                   ),
                   const SizedBox(height: 12),
-                  OutlinedButton(
+                  FilledButton(
                     onPressed: () {
                       final reqText = requirementController.text.trim();
                       if (reqText.isEmpty) {
