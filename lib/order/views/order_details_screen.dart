@@ -855,6 +855,148 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     launchUrlController.dispose();
   }
 
+  Future<void> _showWhatsAppDialog(String? phone, String? applicantName, String? productName, String? status) async {
+    if (phone == null || phone.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Phone number is missing.')),
+      );
+      return;
+    }
+
+    final cleanPhone = phone.replaceAll(RegExp(r'[^\d+]'), '');
+
+    Future<void> openWhatsApp(String text) async {
+      final uri = Uri.parse(
+        'https://wa.me/$cleanPhone?text=${Uri.encodeComponent(text)}',
+      );
+      final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!launched && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open WhatsApp.')),
+        );
+      } else if (mounted) {
+        Navigator.of(context).pop();
+      }
+    }
+
+    final requirementController = TextEditingController();
+    final customController = TextEditingController();
+
+    final safeApplicantName = applicantName?.trim() ?? 'Customer';
+    final safeProductName = productName?.trim() ?? 'Product';
+    final safeStatus = status?.trim() ?? 'In Progress';
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Send WhatsApp Message'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  OutlinedButton(
+                    onPressed: () {
+                      final msg = '''Namaste $safeApplicantName 👋
+
+Aapke *$safeProductName* ka status update:
+
+📌 Status: *$safeStatus*  
+Aapki application safalta se process ho chuki hai.
+
+Doorsy App par aap apni request ka poora progress track kar sakte hain, aur sabhi updates ek hi jagah par dekh sakte hain.
+
+Kisi bhi madad ke liye aap humein app ke through contact kar sakte hain.
+
+Dhanyavaad 😊  
+Team Doorsy''';
+                      openWhatsApp(msg);
+                    },
+                    child: const Text('Send Update'),
+                  ),
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 16),
+                    child: Divider(),
+                  ),
+                  TextFormField(
+                    controller: requirementController,
+                    maxLines: 2,
+                    decoration: const InputDecoration(
+                      labelText: 'Requirement Details',
+                      alignLabelWithHint: true,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  OutlinedButton(
+                    onPressed: () {
+                      final reqText = requirementController.text.trim();
+                      if (reqText.isEmpty) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Please enter requirement details.')),
+                        );
+                        return;
+                      }
+                      
+                      final msg = '''Namaste $safeApplicantName 👋
+
+Aapke *$safeProductName* ki process aage badhane ke liye kuch additional details/documents chahiye.
+
+Kripya neeche di gayi requirements **Doorsy App ke Requests Section** me upload/share karein:
+
+$reqText
+
+⚠️ Sabhi details sirf **Doorsy App** ke through hi share karein.
+
+OTP verification ke liye available rahein.
+
+Dhanyavaad 😊  
+Team Doorsy''';
+                      openWhatsApp(msg);
+                    },
+                    child: const Text('Send Requirement'),
+                  ),
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 16),
+                    child: Divider(),
+                  ),
+                  TextFormField(
+                    controller: customController,
+                    maxLines: 2,
+                    decoration: const InputDecoration(
+                      labelText: 'Custom Message',
+                      alignLabelWithHint: true,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  FilledButton(
+                    onPressed: () {
+                      final text = customController.text.trim();
+                      if (text.isEmpty) return;
+                      openWhatsApp(text);
+                    },
+                    child: const Text('Send Custom Message'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Close'),
+            ),
+          ],
+        );
+      },
+    );
+
+    requirementController.dispose();
+    customController.dispose();
+  }
+
   Future<void> _showUploadDocumentDialog({
     required dynamic userId,
     required String title,
@@ -1206,6 +1348,15 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                     label: 'Send Notification',
                     onPressed: () => _showSendNotificationDialog(
                       order['user_id'],
+                    ),
+                  ),
+                  _ActionButton(
+                    label: 'Send WhatsApp',
+                    onPressed: () => _showWhatsAppDialog(
+                      order['phone']?.toString(),
+                      order['applicant_name']?.toString(),
+                      order['product_name']?.toString(),
+                      order['status']?.toString(),
                     ),
                   ),
                 ],
