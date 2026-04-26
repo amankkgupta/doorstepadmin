@@ -710,6 +710,151 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     requirementDescController.dispose();
   }
 
+  Future<void> _showSendNotificationDialog(dynamic userId) async {
+    final formKey = GlobalKey<FormState>();
+    final titleController = TextEditingController();
+    final launchUrlController = TextEditingController();
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        bool isSaving = false;
+        String? errorMessage;
+
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('Send Notification'),
+              content: Form(
+                key: formKey,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextFormField(
+                      controller: titleController,
+                      decoration: const InputDecoration(
+                        labelText: 'Notification Title',
+                      ),
+                      validator: (value) {
+                        if (value == null || value.trim().isEmpty) {
+                          return 'Enter notification title';
+                        }
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: launchUrlController,
+                      decoration: const InputDecoration(
+                        labelText: 'Launch URL (Optional)',
+                      ),
+                    ),
+                    if (errorMessage != null) ...[
+                      const SizedBox(height: 12),
+                      Text(
+                        errorMessage!,
+                        style: const TextStyle(color: Colors.red),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: isSaving
+                      ? null
+                      : () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: isSaving
+                      ? null
+                      : () async {
+                          if (!formKey.currentState!.validate()) {
+                            return;
+                          }
+
+                          setDialogState(() {
+                            isSaving = true;
+                            errorMessage = null;
+                          });
+
+                          try {
+                            final userIdValue = userId?.toString().trim() ?? '';
+                            final titleText = titleController.text.trim();
+                            final launchUrlText = launchUrlController.text.trim();
+
+                            // 1. Insert into notifications
+                            await Supabase.instance.client.from('notifications').insert({
+                              'user_id': userIdValue,
+                              'content': titleText,
+                              'launch_url': launchUrlText,
+                            });
+
+                            // 2. Fetch FCM token and unread_count
+                            final fcmData = await Supabase.instance.client
+                                .from('fcmtokens')
+                                .select('fcmtoken, unread_count')
+                                .eq('user_id', userIdValue)
+                                .maybeSingle();
+
+                            if (fcmData != null && fcmData['fcmtoken'] != null) {
+                              final token = fcmData['fcmtoken'];
+                              final unreadCount =
+                                  (fcmData['unread_count'] as num?)?.toInt() ?? 0;
+
+                              // 3. Update unread_count
+                              await Supabase.instance.client
+                                  .from('fcmtokens')
+                                  .update({'unread_count': unreadCount + 1})
+                                  .eq('user_id', userIdValue);
+
+                              // 4. Send FCM Push Notification via Edge Function
+                              // Fire and forget, as it's okay if FCM fails
+                              Supabase.instance.client.functions.invoke(
+                                'send-notification',
+                                body: {
+                                  'token': token,
+                                  'title': titleText,
+                                  'launch_url': launchUrlText,
+                                },
+                              ).catchError((e) {
+                                debugPrint('FCM sending failed: $e');
+                                return e;
+                              });
+                            }
+
+                            if (!mounted || !dialogContext.mounted) {
+                              return;
+                            }
+
+                            Navigator.of(dialogContext).pop();
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Notification sent successfully'),
+                              ),
+                            );
+                          } catch (e) {
+                            debugPrint('Error sending notification: $e');
+                            setDialogState(() {
+                              errorMessage = 'Unable to send notification.';
+                              isSaving = false;
+                            });
+                          }
+                        },
+                  child: const Text('Send'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    titleController.dispose();
+    launchUrlController.dispose();
+  }
+
   Future<void> _showUploadDocumentDialog({
     required dynamic userId,
     required String title,
@@ -1055,6 +1200,12 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                       failureMessage: 'Unable to upload second document.',
                       documentNameColumn: 'second_document_name',
                       documentUrlColumn: 'second_document_url',
+                    ),
+                  ),
+                  _ActionButton(
+                    label: 'Send Notification',
+                    onPressed: () => _showSendNotificationDialog(
+                      order['user_id'],
                     ),
                   ),
                 ],
