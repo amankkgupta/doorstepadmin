@@ -1,11 +1,14 @@
+import 'dart:async';
+
 import 'package:admindoorstep/chat/models/chat_message_item.dart';
 import 'package:admindoorstep/chat/models/chat_user_search_result.dart';
 import 'package:admindoorstep/chat/models/conversation_summary.dart';
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 class ChatRepository {
   ChatRepository({SupabaseClient? client})
-      : _client = client ?? Supabase.instance.client;
+    : _client = client ?? Supabase.instance.client;
 
   final SupabaseClient _client;
 
@@ -13,10 +16,7 @@ class ChatRepository {
     required int offset,
     required int limit,
   }) async {
-    final rows = await _fetchConversationRows(
-      offset: offset,
-      limit: limit,
-    );
+    final rows = await _fetchConversationRows(offset: offset, limit: limit);
 
     final conversations = List<Map<String, dynamic>>.from(rows);
     final userIds = conversations
@@ -43,7 +43,8 @@ class ChatRepository {
         conversationId: (row['conversation_id'] ?? '').toString(),
         userId: userId,
         messageId: messageId,
-        supportUnread: int.tryParse((row['support_unread'] ?? 0).toString()) ?? 0,
+        supportUnread:
+            int.tryParse((row['support_unread'] ?? 0).toString()) ?? 0,
         modifiedAt: DateTime.tryParse((row['modified_at'] ?? '').toString()),
         userName: _pickUserName(user, userId),
         userEmail: (user['email'] ?? '').toString(),
@@ -104,9 +105,9 @@ class ChatRepository {
         .order('created_at', ascending: false)
         .range(offset, offset + limit - 1);
 
-    return List<Map<String, dynamic>>.from(response)
-        .map(ChatMessageItem.fromMap)
-        .toList();
+    return List<Map<String, dynamic>>.from(
+      response,
+    ).map(ChatMessageItem.fromMap).toList();
   }
 
   Future<ChatMessageItem> sendSupportMessage({
@@ -158,6 +159,10 @@ class ChatRepository {
         throw Exception('Unable to update conversation after sending message.');
       }
 
+      unawaited(
+        _sendSupportMessageNotification(userId: userId, title: message),
+      );
+
       return insertedMessage;
     } on PostgrestException {
       rethrow;
@@ -166,7 +171,9 @@ class ChatRepository {
     }
   }
 
-  Future<List<ChatUserSearchResult>> findUsersByEmailPrefix(String emailPrefix) async {
+  Future<List<ChatUserSearchResult>> findUsersByEmailPrefix(
+    String emailPrefix,
+  ) async {
     final normalizedEmail = emailPrefix.trim().toLowerCase();
     if (normalizedEmail.isEmpty) {
       return const [];
@@ -192,22 +199,19 @@ class ChatRepository {
           .map((row) => (row['user_id'] ?? '').toString().trim())
           .where((value) => value.isNotEmpty)
           .toList();
-      final conversationIdByUserId =
-          await _fetchConversationIdsByUserIds(userIds);
+      final conversationIdByUserId = await _fetchConversationIdsByUserIds(
+        userIds,
+      );
 
-      return users
-          .map(
-            (user) {
-              final userId = (user['user_id'] ?? '').toString().trim();
-              return ChatUserSearchResult(
-                userId: userId,
-                userName: _pickUserName(user, userId),
-                userEmail: (user['email'] ?? '').toString(),
-                conversationId: conversationIdByUserId[userId],
-              );
-            },
-          )
-          .toList();
+      return users.map((user) {
+        final userId = (user['user_id'] ?? '').toString().trim();
+        return ChatUserSearchResult(
+          userId: userId,
+          userName: _pickUserName(user, userId),
+          userEmail: (user['email'] ?? '').toString(),
+          conversationId: conversationIdByUserId[userId],
+        );
+      }).toList();
     } on PostgrestException {
       rethrow;
     } catch (_) {
@@ -233,7 +237,9 @@ class ChatRepository {
       for (final row in List<Map<String, dynamic>>.from(rows)) {
         final userId = (row['user_id'] ?? '').toString().trim();
         final conversationId = (row['conversation_id'] ?? '').toString().trim();
-        if (userId.isEmpty || conversationId.isEmpty || map.containsKey(userId)) {
+        if (userId.isEmpty ||
+            conversationId.isEmpty ||
+            map.containsKey(userId)) {
           continue;
         }
         map[userId] = conversationId;
@@ -282,7 +288,9 @@ class ChatRepository {
       throw Exception('User id is required to send message.');
     }
 
-    final foundConversationId = await findConversationIdByUserId(normalizedUserId);
+    final foundConversationId = await findConversationIdByUserId(
+      normalizedUserId,
+    );
     if (foundConversationId != null && foundConversationId.isNotEmpty) {
       return foundConversationId;
     }
@@ -315,7 +323,9 @@ class ChatRepository {
     }
   }
 
-  Future<Map<String, Map<String, dynamic>>> _fetchUsers(List<String> userIds) async {
+  Future<Map<String, Map<String, dynamic>>> _fetchUsers(
+    List<String> userIds,
+  ) async {
     if (userIds.isEmpty) {
       return const {};
     }
@@ -357,12 +367,51 @@ class ChatRepository {
     }
   }
 
+  Future<void> _sendSupportMessageNotification({
+    required String userId,
+    required String title,
+  }) async {
+    try {
+      final normalizedUserId = userId.trim();
+      final notificationTitle = title.trim();
+      if (normalizedUserId.isEmpty || notificationTitle.isEmpty) {
+        return;
+      }
+
+      final fcmData = await _client
+          .from('fcmtokens')
+          .select('fcmtoken, is_active')
+          .eq('user_id', normalizedUserId)
+          .maybeSingle();
+
+      if (fcmData == null || !_isFalse(fcmData['is_active'])) {
+        return;
+      }
+
+      final token = (fcmData['fcmtoken'] ?? '').toString().trim();
+      if (token.isEmpty) {
+        return;
+      }
+
+      await _client.functions.invoke(
+        'send-notification',
+        body: {'token': token, 'title': notificationTitle},
+      );
+    } catch (error) {
+      debugPrint('Chat FCM notification failed: $error');
+    }
+  }
+
+  bool _isFalse(Object? value) {
+    if (value is bool) {
+      return !value;
+    }
+
+    return value?.toString().trim().toLowerCase() == 'false';
+  }
+
   String _pickUserName(Map<String, dynamic> user, String fallbackUserId) {
-    final candidates = [
-      user['name'],
-      user['email'],
-      fallbackUserId,
-    ];
+    final candidates = [user['name'], user['email'], fallbackUserId];
 
     for (final value in candidates) {
       final text = (value ?? '').toString().trim();
