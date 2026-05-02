@@ -15,8 +15,18 @@ class ChatRepository {
   Future<List<ConversationSummary>> fetchInboxPage({
     required int offset,
     required int limit,
+    required dynamic categoryId,
   }) async {
-    final rows = await _fetchConversationRows(offset: offset, limit: limit);
+    if (categoryId == null) {
+      return const [];
+    }
+
+    final rows = await _fetchConversationRows(
+      offset: offset,
+      limit: limit,
+      categoryId: categoryId,
+    );
+    debugPrint('Fetched conversation rows: $rows');
 
     final conversations = List<Map<String, dynamic>>.from(rows);
     final userIds = conversations
@@ -56,24 +66,38 @@ class ChatRepository {
   Future<List<dynamic>> _fetchConversationRows({
     required int offset,
     required int limit,
+    required dynamic categoryId,
   }) async {
     try {
-      return await _client
+      debugPrint(
+        'Fetching conversations for category_id=$categoryId, '
+        'offset=$offset, limit=$limit',
+      );
+
+      final response = await _client
           .from('conversations')
           .select(
             'conversation_id, user_id, message_id, support_unread, modified_at',
           )
+          .eq('category_id', categoryId)
           .order('modified_at', ascending: false)
           .range(offset, offset + limit - 1);
+
+      debugPrint('Conversations response: $response');
+      return response;
     } on PostgrestException {
       rethrow;
-    } catch (_) {
+    } catch (error) {
+      debugPrint('Fetch conversations failed: $error');
       throw Exception('Unable to fetch conversations.');
     }
   }
 
-  Future<void> markSupportUnreadAsRead(String conversationId) async {
-    if (conversationId.isEmpty) {
+  Future<void> markSupportUnreadAsRead(
+    String conversationId, {
+    required dynamic categoryId,
+  }) async {
+    if (conversationId.isEmpty || categoryId == null) {
       return;
     }
 
@@ -81,7 +105,8 @@ class ChatRepository {
       await _client
           .from('conversations')
           .update({'support_unread': 0})
-          .eq('conversation_id', conversationId);
+          .eq('conversation_id', conversationId)
+          .eq('category_id', categoryId);
     } on PostgrestException {
       rethrow;
     } catch (_) {
@@ -94,7 +119,16 @@ class ChatRepository {
     required String conversationId,
     required int offset,
     required int limit,
+    required dynamic categoryId,
   }) async {
+    final canReadConversation = await _isConversationInCategory(
+      conversationId: conversationId,
+      categoryId: categoryId,
+    );
+    if (!canReadConversation) {
+      return const [];
+    }
+
     final baseQuery = _client
         .from('chats')
         .select('message_id, message, sender_id, conversation_id, created_at');
@@ -115,11 +149,13 @@ class ChatRepository {
     required String userId,
     required String supportUserId,
     required String message,
+    required dynamic categoryId,
   }) async {
     try {
       final resolvedConversationId = await _resolveConversationId(
         userId: userId,
         conversationId: conversationId,
+        categoryId: categoryId,
       );
 
       final inserted = await _client
@@ -139,6 +175,7 @@ class ChatRepository {
             .from('conversations')
             .select('user_unread')
             .eq('conversation_id', resolvedConversationId)
+            .eq('category_id', categoryId)
             .maybeSingle();
 
         final currentUserUnread =
@@ -152,7 +189,8 @@ class ChatRepository {
               'user_unread': currentUserUnread + 1,
               'support_unread': 0,
             })
-            .eq('conversation_id', resolvedConversationId);
+            .eq('conversation_id', resolvedConversationId)
+            .eq('category_id', categoryId);
       } on PostgrestException {
         rethrow;
       } catch (_) {
@@ -173,9 +211,10 @@ class ChatRepository {
 
   Future<List<ChatUserSearchResult>> findUsersByEmailPrefix(
     String emailPrefix,
+    dynamic categoryId,
   ) async {
     final normalizedEmail = emailPrefix.trim().toLowerCase();
-    if (normalizedEmail.isEmpty) {
+    if (normalizedEmail.isEmpty || categoryId == null) {
       return const [];
     }
 
@@ -201,6 +240,7 @@ class ChatRepository {
           .toList();
       final conversationIdByUserId = await _fetchConversationIdsByUserIds(
         userIds,
+        categoryId: categoryId,
       );
 
       return users.map((user) {
@@ -220,9 +260,10 @@ class ChatRepository {
   }
 
   Future<Map<String, String>> _fetchConversationIdsByUserIds(
-    List<String> userIds,
-  ) async {
-    if (userIds.isEmpty) {
+    List<String> userIds, {
+    required dynamic categoryId,
+  }) async {
+    if (userIds.isEmpty || categoryId == null) {
       return const {};
     }
 
@@ -231,6 +272,7 @@ class ChatRepository {
           .from('conversations')
           .select('user_id, conversation_id, modified_at')
           .inFilter('user_id', userIds)
+          .eq('category_id', categoryId)
           .order('modified_at', ascending: false);
 
       final map = <String, String>{};
@@ -250,9 +292,12 @@ class ChatRepository {
     }
   }
 
-  Future<String?> findConversationIdByUserId(String userId) async {
+  Future<String?> findConversationIdByUserId(
+    String userId, {
+    required dynamic categoryId,
+  }) async {
     final normalizedUserId = userId.trim();
-    if (normalizedUserId.isEmpty) {
+    if (normalizedUserId.isEmpty || categoryId == null) {
       return null;
     }
 
@@ -261,6 +306,7 @@ class ChatRepository {
           .from('conversations')
           .select('conversation_id')
           .eq('user_id', normalizedUserId)
+          .eq('category_id', categoryId)
           .order('modified_at', ascending: false)
           .limit(1)
           .maybeSingle();
@@ -276,20 +322,29 @@ class ChatRepository {
 
   Future<String> _resolveConversationId({
     required String userId,
+    required dynamic categoryId,
     String? conversationId,
   }) async {
     final existingConversationId = (conversationId ?? '').trim();
     if (existingConversationId.isNotEmpty) {
+      final canUseConversation = await _isConversationInCategory(
+        conversationId: existingConversationId,
+        categoryId: categoryId,
+      );
+      if (!canUseConversation) {
+        throw Exception('Unable to find conversation for this category.');
+      }
       return existingConversationId;
     }
 
     final normalizedUserId = userId.trim();
-    if (normalizedUserId.isEmpty) {
+    if (normalizedUserId.isEmpty || categoryId == null) {
       throw Exception('User id is required to send message.');
     }
 
     final foundConversationId = await findConversationIdByUserId(
       normalizedUserId,
+      categoryId: categoryId,
     );
     if (foundConversationId != null && foundConversationId.isNotEmpty) {
       return foundConversationId;
@@ -301,6 +356,7 @@ class ChatRepository {
           .from('conversations')
           .insert({
             'user_id': normalizedUserId,
+            'category_id': categoryId,
             'user_unread': 0,
             'support_unread': 0,
             'created_at': nowIso,
@@ -320,6 +376,31 @@ class ChatRepository {
       rethrow;
     } catch (_) {
       throw Exception('Unable to create conversation.');
+    }
+  }
+
+  Future<bool> _isConversationInCategory({
+    required String conversationId,
+    required dynamic categoryId,
+  }) async {
+    final normalizedConversationId = conversationId.trim();
+    if (normalizedConversationId.isEmpty || categoryId == null) {
+      return false;
+    }
+
+    try {
+      final row = await _client
+          .from('conversations')
+          .select('conversation_id')
+          .eq('conversation_id', normalizedConversationId)
+          .eq('category_id', categoryId)
+          .maybeSingle();
+
+      return row != null;
+    } on PostgrestException {
+      rethrow;
+    } catch (_) {
+      throw Exception('Unable to find conversation for this category.');
     }
   }
 

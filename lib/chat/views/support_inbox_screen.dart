@@ -11,8 +11,20 @@ class SupportInboxScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final categoryId = context.watch<AuthViewModel>().user?.categoryId;
+    debugPrint('Support inbox admin category_id: $categoryId');
+
+    if (categoryId == null) {
+      return Scaffold(
+        appBar: AppBar(title: Text('Support Inbox')),
+        body: const Center(child: Text('Unable to find admin category.')),
+      );
+    }
+
     return ChangeNotifierProvider(
-      create: (_) => SupportInboxViewModel()..loadInitial(),
+      key: ValueKey(categoryId),
+      create: (_) =>
+          SupportInboxViewModel(categoryId: categoryId)..loadInitial(),
       child: const _SupportInboxView(),
     );
   }
@@ -40,13 +52,16 @@ class _SupportInboxViewState extends State<_SupportInboxView> {
     required String subtitle,
     required String userId,
     required String supportUserId,
+    required dynamic categoryId,
     String? conversationId,
     ConversationSummary? conversationToMark,
   }) async {
     final viewModel = context.read<SupportInboxViewModel>();
 
     if (conversationToMark != null) {
-      final didMarkRead = await viewModel.markConversationRead(conversationToMark);
+      final didMarkRead = await viewModel.markConversationRead(
+        conversationToMark,
+      );
       if (!didMarkRead || !context.mounted) {
         return;
       }
@@ -63,11 +78,9 @@ class _SupportInboxViewState extends State<_SupportInboxView> {
             conversationId: conversationId,
             userId: userId,
             supportUserId: supportUserId,
+            categoryId: categoryId,
           )..bootstrap(),
-          child: ChatDetailScreen(
-            title: title,
-            subtitle: subtitle,
-          ),
+          child: ChatDetailScreen(title: title, subtitle: subtitle),
         ),
       ),
     );
@@ -84,6 +97,7 @@ class _SupportInboxViewState extends State<_SupportInboxView> {
     final viewModel = context.watch<SupportInboxViewModel>();
     final authViewModel = context.watch<AuthViewModel>();
     final supportUserId = authViewModel.user?.id ?? '';
+    final categoryId = authViewModel.user?.categoryId;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Support Inbox')),
@@ -96,9 +110,8 @@ class _SupportInboxViewState extends State<_SupportInboxView> {
               controller: _searchEmailController,
               keyboardType: TextInputType.emailAddress,
               textInputAction: TextInputAction.search,
-              onSubmitted: (_) => viewModel.searchUserByEmail(
-                _searchEmailController.text,
-              ),
+              onSubmitted: (_) =>
+                  viewModel.searchUserByEmail(_searchEmailController.text),
               decoration: InputDecoration(
                 labelText: 'Search user by email',
                 hintText: 'user@example.com',
@@ -165,6 +178,7 @@ class _SupportInboxViewState extends State<_SupportInboxView> {
                               subtitle: user.userEmail,
                               userId: user.userId,
                               supportUserId: supportUserId,
+                              categoryId: categoryId,
                               conversationId: user.conversationId,
                             ),
                           ),
@@ -202,6 +216,7 @@ class _SupportInboxViewState extends State<_SupportInboxView> {
                       subtitle: conversation.userEmail,
                       userId: conversation.userId,
                       supportUserId: supportUserId,
+                      categoryId: categoryId,
                       conversationId: conversation.conversationId,
                       conversationToMark: conversation,
                     ),
@@ -265,10 +280,7 @@ class _SearchedUserCard extends StatelessWidget {
 }
 
 class _ConversationTile extends StatelessWidget {
-  const _ConversationTile({
-    required this.conversation,
-    required this.onTap,
-  });
+  const _ConversationTile({required this.conversation, required this.onTap});
 
   final ConversationSummary conversation;
   final VoidCallback onTap;
@@ -310,9 +322,9 @@ class _ConversationTile extends StatelessWidget {
                       const SizedBox(height: 2),
                       Text(
                         conversation.userEmail,
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Colors.black54,
-                        ),
+                        style: Theme.of(
+                          context,
+                        ).textTheme.bodySmall?.copyWith(color: Colors.black54),
                       ),
                     ],
                     const SizedBox(height: 8),
@@ -332,9 +344,9 @@ class _ConversationTile extends StatelessWidget {
                 children: [
                   Text(
                     _formatModifiedAt(conversation.modifiedAt),
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Colors.black54,
-                    ),
+                    style: Theme.of(
+                      context,
+                    ).textTheme.bodySmall?.copyWith(color: Colors.black54),
                   ),
                   const SizedBox(height: 8),
                   Container(

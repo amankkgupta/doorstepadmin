@@ -1,8 +1,10 @@
+import 'package:admindoorstep/auth/viewmodels/auth_view_model.dart';
 import 'package:admindoorstep/download/download_helper.dart';
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -35,6 +37,8 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   bool _hasResolvedAdjacentOrders = false;
   dynamic _previousOrderId;
   dynamic _nextOrderId;
+  dynamic _loadedCategoryId;
+  List<dynamic>? _categoryProductIds;
 
   @override
   void initState() {
@@ -44,6 +48,16 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   }
 
   Future<Map<String, dynamic>?> _fetchOrder() async {
+    final categoryId = context.read<AuthViewModel>().user?.categoryId;
+    if (categoryId == null) {
+      return null;
+    }
+
+    final productIds = await _fetchProductIdsForCategory(categoryId);
+    if (productIds.isEmpty) {
+      return null;
+    }
+
     final response = await Supabase.instance.client
         .from('orders')
         .select(
@@ -53,6 +67,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
           'is_others, applicant_name, product_name, user_id',
         )
         .eq('order_id', _currentOrderId)
+        .inFilter('product_id', productIds)
         .maybeSingle();
 
     return response;
@@ -91,10 +106,28 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     });
 
     try {
+      final categoryId = context.read<AuthViewModel>().user?.categoryId;
+      final productIds = categoryId == null
+          ? const <dynamic>[]
+          : await _fetchProductIdsForCategory(categoryId);
+
+      if (productIds.isEmpty) {
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          _previousOrderId = null;
+          _nextOrderId = null;
+          _hasResolvedAdjacentOrders = true;
+        });
+        return;
+      }
+
       final previousResponse = await Supabase.instance.client
           .from('orders')
           .select('order_id')
           .eq('status', status)
+          .inFilter('product_id', productIds)
           .lt('created_at', createdAtText)
           .order('created_at', ascending: false)
           .limit(1);
@@ -103,6 +136,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
           .from('orders')
           .select('order_id')
           .eq('status', status)
+          .inFilter('product_id', productIds)
           .gt('created_at', createdAtText)
           .order('created_at', ascending: true)
           .limit(1);
@@ -111,14 +145,15 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
         return;
       }
 
-      final previousOrders =
-          (previousResponse as List<dynamic>).cast<Map<String, dynamic>>();
-      final nextOrders =
-          (nextResponse as List<dynamic>).cast<Map<String, dynamic>>();
+      final previousOrders = (previousResponse as List<dynamic>)
+          .cast<Map<String, dynamic>>();
+      final nextOrders = (nextResponse as List<dynamic>)
+          .cast<Map<String, dynamic>>();
 
       setState(() {
-        _previousOrderId =
-            previousOrders.isEmpty ? null : previousOrders.first['order_id'];
+        _previousOrderId = previousOrders.isEmpty
+            ? null
+            : previousOrders.first['order_id'];
         _nextOrderId = nextOrders.isEmpty ? null : nextOrders.first['order_id'];
         _hasResolvedAdjacentOrders = true;
       });
@@ -138,6 +173,27 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
         });
       }
     }
+  }
+
+  Future<List<dynamic>> _fetchProductIdsForCategory(dynamic categoryId) async {
+    if (_loadedCategoryId == categoryId && _categoryProductIds != null) {
+      return _categoryProductIds!;
+    }
+
+    final response = await Supabase.instance.client
+        .from('products')
+        .select('product_id')
+        .eq('category_id', categoryId);
+
+    final productIds = (response as List<dynamic>)
+        .cast<Map<String, dynamic>>()
+        .map((product) => product['product_id'])
+        .where((productId) => productId != null)
+        .toList();
+
+    _loadedCategoryId = categoryId;
+    _categoryProductIds = productIds;
+    return productIds;
   }
 
   Future<void> _goToOrder(dynamic orderId) async {
@@ -175,20 +231,18 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
 
       final documents = (response as List<dynamic>)
           .cast<Map<String, dynamic>>()
-          .map(
-            (document) {
-              final vaultDocument = document['vault_document_id'];
-              final related = vaultDocument is Map<String, dynamic>
-                  ? vaultDocument
-                  : <String, dynamic>{};
+          .map((document) {
+            final vaultDocument = document['vault_document_id'];
+            final related = vaultDocument is Map<String, dynamic>
+                ? vaultDocument
+                : <String, dynamic>{};
 
-              return <String, dynamic>{
-                'document_name': related['name'] ?? 'Document',
-                'document_value': related['value'],
-                'document_type': related['type'] ?? 'text',
-              };
-            },
-          )
+            return <String, dynamic>{
+              'document_name': related['name'] ?? 'Document',
+              'document_value': related['value'],
+              'document_type': related['type'] ?? 'text',
+            };
+          })
           .where((document) => document['document_value'] != null)
           .toList();
 
@@ -330,10 +384,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     try {
       final resolvedUrl = await _resolveStoredDocumentUrl(text);
       final downloadName = _buildDownloadFileName(fileName, text);
-      final didDownload = await downloadFileFromUrl(
-        resolvedUrl,
-        downloadName,
-      );
+      final didDownload = await downloadFileFromUrl(resolvedUrl, downloadName);
 
       if (didDownload || !mounted) {
         return;
@@ -344,16 +395,16 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error.message)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message)));
     } catch (_) {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Unable to open document')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Unable to open document')));
     }
   }
 
@@ -396,9 +447,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                   TextField(
                     controller: controller,
                     maxLines: 4,
-                    decoration: const InputDecoration(
-                      labelText: 'Message',
-                    ),
+                    decoration: const InputDecoration(labelText: 'Message'),
                   ),
                   if (errorMessage != null) ...[
                     const SizedBox(height: 12),
@@ -500,9 +549,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                               selectedStatus = value;
                             });
                           },
-                    decoration: const InputDecoration(
-                      labelText: 'Status',
-                    ),
+                    decoration: const InputDecoration(labelText: 'Status'),
                   ),
                   if (errorMessage != null) ...[
                     const SizedBox(height: 12),
@@ -682,7 +729,9 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                             Navigator.of(dialogContext).pop();
                             ScaffoldMessenger.of(context).showSnackBar(
                               const SnackBar(
-                                content: Text('Requirement created successfully'),
+                                content: Text(
+                                  'Requirement created successfully',
+                                ),
                               ),
                             );
                           } on PostgrestException catch (error) {
@@ -782,14 +831,17 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                           try {
                             final userIdValue = userId?.toString().trim() ?? '';
                             final titleText = titleController.text.trim();
-                            final launchUrlText = launchUrlController.text.trim();
+                            final launchUrlText = launchUrlController.text
+                                .trim();
 
                             // 1. Insert into notifications
-                            await Supabase.instance.client.from('notifications').insert({
-                              'user_id': userIdValue,
-                              'content': titleText,
-                              'launch_url': launchUrlText,
-                            });
+                            await Supabase.instance.client
+                                .from('notifications')
+                                .insert({
+                                  'user_id': userIdValue,
+                                  'content': titleText,
+                                  'launch_url': launchUrlText,
+                                });
 
                             // 2. Fetch FCM token and unread_count
                             final fcmData = await Supabase.instance.client
@@ -798,10 +850,12 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                                 .eq('user_id', userIdValue)
                                 .maybeSingle();
 
-                            if (fcmData != null && fcmData['fcmtoken'] != null) {
+                            if (fcmData != null &&
+                                fcmData['fcmtoken'] != null) {
                               final token = fcmData['fcmtoken'];
                               final unreadCount =
-                                  (fcmData['unread_count'] as num?)?.toInt() ?? 0;
+                                  (fcmData['unread_count'] as num?)?.toInt() ??
+                                  0;
 
                               // 3. Update unread_count
                               await Supabase.instance.client
@@ -811,17 +865,19 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
 
                               // 4. Send FCM Push Notification via Edge Function
                               // Fire and forget, as it's okay if FCM fails
-                              Supabase.instance.client.functions.invoke(
-                                'send-notification',
-                                body: {
-                                  'token': token,
-                                  'title': titleText,
-                                  'launch_url': launchUrlText,
-                                },
-                              ).catchError((e) {
-                                debugPrint('FCM sending failed: $e');
-                                return e;
-                              });
+                              Supabase.instance.client.functions
+                                  .invoke(
+                                    'send-notification',
+                                    body: {
+                                      'token': token,
+                                      'title': titleText,
+                                      'launch_url': launchUrlText,
+                                    },
+                                  )
+                                  .catchError((e) {
+                                    debugPrint('FCM sending failed: $e');
+                                    return e;
+                                  });
                             }
 
                             if (!mounted || !dialogContext.mounted) {
@@ -855,11 +911,16 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     launchUrlController.dispose();
   }
 
-  Future<void> _showWhatsAppDialog(String? phone, String? applicantName, String? productName, String? status) async {
+  Future<void> _showWhatsAppDialog(
+    String? phone,
+    String? applicantName,
+    String? productName,
+    String? status,
+  ) async {
     if (phone == null || phone.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Phone number is missing.')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Phone number is missing.')));
       return;
     }
 
@@ -869,7 +930,10 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       final uri = Uri.parse(
         'https://wa.me/$cleanPhone?text=${Uri.encodeComponent(text)}',
       );
-      final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      final launched = await launchUrl(
+        uri,
+        mode: LaunchMode.externalApplication,
+      );
       if (!launched && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Could not open WhatsApp.')),
@@ -900,7 +964,8 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                 children: [
                   FilledButton(
                     onPressed: () {
-                      final msg = '''Namaste $safeApplicantName 👋
+                      final msg =
+                          '''Namaste $safeApplicantName 👋
 
 Aapke *$safeProductName* ka status update:
 
@@ -935,12 +1000,15 @@ Team Doorsy''';
                       final reqText = requirementController.text.trim();
                       if (reqText.isEmpty) {
                         ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Please enter requirement details.')),
+                          const SnackBar(
+                            content: Text('Please enter requirement details.'),
+                          ),
                         );
                         return;
                       }
-                      
-                      final msg = '''Namaste $safeApplicantName 👋
+
+                      final msg =
+                          '''Namaste $safeApplicantName 👋
 
 Aapke *$safeProductName* ki process aage badhane ke liye kuch additional details/documents chahiye.
 
@@ -1042,32 +1110,38 @@ Team Doorsy''';
                       onPressed: isSaving
                           ? null
                           : () async {
-                              final result = await FilePicker.platform.pickFiles(
-                                type: FileType.custom,
-                                allowedExtensions: const [
-                                  'pdf',
-                                  'jpg',
-                                  'jpeg',
-                                  'png',
-                                  'webp',
-                                ],
-                                withData: true,
-                              );
+                              final result = await FilePicker.platform
+                                  .pickFiles(
+                                    type: FileType.custom,
+                                    allowedExtensions: const [
+                                      'pdf',
+                                      'jpg',
+                                      'jpeg',
+                                      'png',
+                                      'webp',
+                                    ],
+                                    withData: true,
+                                  );
 
                               if (result == null || result.files.isEmpty) {
                                 return;
                               }
 
                               setDialogState(() {
-                                if (!_isAllowedDocumentFile(result.files.single.name)) {
+                                if (!_isAllowedDocumentFile(
+                                  result.files.single.name,
+                                )) {
                                   errorMessage =
                                       'Only PDF and image files are allowed';
                                   return;
                                 }
                                 selectedFile = result.files.single;
                                 errorMessage = null;
-                                if (documentNameController.text.trim().isEmpty) {
-                                  documentNameController.text = selectedFile!.name;
+                                if (documentNameController.text
+                                    .trim()
+                                    .isEmpty) {
+                                  documentNameController.text =
+                                      selectedFile!.name;
                                 }
                               });
                             },
@@ -1077,9 +1151,7 @@ Team Doorsy''';
                       const SizedBox(height: 8),
                       Text(
                         'Selected file: ${selectedFile!.name}',
-                        style: Theme.of(
-                          context,
-                        ).textTheme.bodyMedium?.copyWith(
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                           color: Colors.black87,
                           fontWeight: FontWeight.w600,
                         ),
@@ -1121,7 +1193,8 @@ Team Doorsy''';
 
                           if (!_isAllowedDocumentFile(selectedFile!.name)) {
                             setDialogState(() {
-                              errorMessage = 'Only PDF and image files are allowed';
+                              errorMessage =
+                                  'Only PDF and image files are allowed';
                             });
                             return;
                           }
@@ -1173,8 +1246,9 @@ Team Doorsy''';
                             await Supabase.instance.client
                                 .from('orders')
                                 .update({
-                                  documentNameColumn:
-                                      documentNameController.text.trim(),
+                                  documentNameColumn: documentNameController
+                                      .text
+                                      .trim(),
                                   documentUrlColumn: filePath,
                                 })
                                 .eq('order_id', _currentOrderId);
@@ -1257,9 +1331,9 @@ Team Doorsy''';
             children: [
               Text(
                 '${order['product_name'] ?? '-'}',
-                style: Theme.of(
-                  context,
-                ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700),
+                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
               ),
               const SizedBox(height: 20),
               Row(
@@ -1302,21 +1376,18 @@ Team Doorsy''';
                 children: [
                   _ActionButton(
                     label: 'Create requirements',
-                    onPressed: () => _showCreateRequirementDialog(
-                      order['user_id'],
-                    ),
+                    onPressed: () =>
+                        _showCreateRequirementDialog(order['user_id']),
                   ),
                   _ActionButton(
                     label: 'Change Message',
-                    onPressed: () => _showChangeMessageDialog(
-                      '${order['message'] ?? ''}',
-                    ),
+                    onPressed: () =>
+                        _showChangeMessageDialog('${order['message'] ?? ''}'),
                   ),
                   _ActionButton(
                     label: 'Change Status',
-                    onPressed: () => _showChangeStatusDialog(
-                      '${order['status'] ?? ''}',
-                    ),
+                    onPressed: () =>
+                        _showChangeStatusDialog('${order['status'] ?? ''}'),
                   ),
                   _ActionButton(
                     label: 'Load document',
@@ -1346,9 +1417,8 @@ Team Doorsy''';
                   ),
                   _ActionButton(
                     label: 'Send Notification',
-                    onPressed: () => _showSendNotificationDialog(
-                      order['user_id'],
-                    ),
+                    onPressed: () =>
+                        _showSendNotificationDialog(order['user_id']),
                   ),
                   _ActionButton(
                     label: 'Send WhatsApp',
@@ -1375,9 +1445,7 @@ Team Doorsy''';
                 _DetailCard(
                   title: 'Loaded Documents',
                   children: _loadedDocuments.isEmpty
-                      ? const [
-                          Text('No matching documents found.'),
-                        ]
+                      ? const [Text('No matching documents found.')]
                       : [
                           Wrap(
                             spacing: 12,
@@ -1412,7 +1480,10 @@ Team Doorsy''';
               const SizedBox(height: 24),
               _DetailCard(
                 children: [
-                  _DetailRow(label: 'Applicant Name', value: order['applicant_name']),
+                  _DetailRow(
+                    label: 'Applicant Name',
+                    value: order['applicant_name'],
+                  ),
                   _DetailRow(label: 'Status', value: order['status']),
                   _DetailRow(label: 'Message', value: order['message']),
                   _DetailRow(label: 'Phone', value: order['phone']),
@@ -1429,21 +1500,28 @@ Team Doorsy''';
                 title: 'Documents',
                 children: [
                   _DownloadRow(
-                    label: '${order['first_document_name'] ?? 'First Document'}',
-                    hasValue:
-                        (order['first_document_url'] ?? '').toString().trim().isNotEmpty,
+                    label:
+                        '${order['first_document_name'] ?? 'First Document'}',
+                    hasValue: (order['first_document_url'] ?? '')
+                        .toString()
+                        .trim()
+                        .isNotEmpty,
                     onPressed: () => _downloadStoredDocument(
                       order['first_document_url'],
                       fileName: '${order['first_document_name'] ?? 'Document'}',
                     ),
                   ),
                   _DownloadRow(
-                    label: '${order['second_document_name'] ?? 'Second Document'}',
-                    hasValue:
-                        (order['second_document_url'] ?? '').toString().trim().isNotEmpty,
+                    label:
+                        '${order['second_document_name'] ?? 'Second Document'}',
+                    hasValue: (order['second_document_url'] ?? '')
+                        .toString()
+                        .trim()
+                        .isNotEmpty,
                     onPressed: () => _downloadStoredDocument(
                       order['second_document_url'],
-                      fileName: '${order['second_document_name'] ?? 'Document'}',
+                      fileName:
+                          '${order['second_document_name'] ?? 'Document'}',
                     ),
                   ),
                 ],
@@ -1515,10 +1593,7 @@ class _LoadedDocumentItem extends StatelessWidget {
                   ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
                 ),
                 const SizedBox(height: 6),
-                InkWell(
-                  onTap: onShowValue,
-                  child: Text('${value ?? '-'}'),
-                ),
+                InkWell(onTap: onShowValue, child: Text('${value ?? '-'}')),
               ],
             ),
     );
@@ -1533,10 +1608,7 @@ class _ActionButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return OutlinedButton(
-      onPressed: onPressed ?? () {},
-      child: Text(label),
-    );
+    return OutlinedButton(onPressed: onPressed ?? () {}, child: Text(label));
   }
 }
 

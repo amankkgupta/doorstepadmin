@@ -1,4 +1,6 @@
+import 'package:admindoorstep/auth/viewmodels/auth_view_model.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:admindoorstep/order/views/order_details_screen.dart';
@@ -67,6 +69,8 @@ class _OrdersTabState extends State<_OrdersTab> {
   bool _isLoadingMore = false;
   bool _hasMore = true;
   String? _errorMessage;
+  dynamic _loadedCategoryId;
+  List<dynamic>? _categoryProductIds;
 
   @override
   void initState() {
@@ -104,11 +108,30 @@ class _OrdersTabState extends State<_OrdersTab> {
     try {
       final from = _orders.length;
       final to = from + _pageSize - 1;
+      final categoryId = context.read<AuthViewModel>().user?.categoryId;
+
+      if (categoryId == null) {
+        setState(() {
+          _errorMessage = 'Unable to find admin category.';
+          _hasMore = false;
+        });
+        return;
+      }
+
+      final productIds = await _fetchProductIdsForCategory(categoryId);
+
+      if (productIds.isEmpty) {
+        setState(() {
+          _hasMore = false;
+        });
+        return;
+      }
 
       final response = await Supabase.instance.client
           .from('orders')
           .select('order_id, product_name, applicant_name, created_at')
           .eq('status', widget.status)
+          .inFilter('product_id', productIds)
           .order('created_at', ascending: false)
           .range(from, to);
 
@@ -129,6 +152,27 @@ class _OrdersTabState extends State<_OrdersTab> {
         });
       }
     }
+  }
+
+  Future<List<dynamic>> _fetchProductIdsForCategory(dynamic categoryId) async {
+    if (_loadedCategoryId == categoryId && _categoryProductIds != null) {
+      return _categoryProductIds!;
+    }
+
+    final response = await Supabase.instance.client
+        .from('products')
+        .select('product_id')
+        .eq('category_id', categoryId);
+
+    final productIds = (response as List<dynamic>)
+        .cast<Map<String, dynamic>>()
+        .map((product) => product['product_id'])
+        .where((productId) => productId != null)
+        .toList();
+
+    _loadedCategoryId = categoryId;
+    _categoryProductIds = productIds;
+    return productIds;
   }
 
   @override
@@ -156,8 +200,9 @@ class _OrdersTabState extends State<_OrdersTab> {
     return ListView.separated(
       padding: const EdgeInsets.all(24),
       itemCount: _orders.length + 1,
-      separatorBuilder: (_, index) =>
-          index == _orders.length - 1 ? const SizedBox.shrink() : const SizedBox(height: 12),
+      separatorBuilder: (_, index) => index == _orders.length - 1
+          ? const SizedBox.shrink()
+          : const SizedBox(height: 12),
       itemBuilder: (context, index) {
         if (index == _orders.length) {
           return _OrdersFooter(
@@ -178,9 +223,8 @@ class _OrdersTabState extends State<_OrdersTab> {
             onTap: () {
               Navigator.of(context).push(
                 MaterialPageRoute(
-                  builder: (_) => OrderDetailsScreen(
-                    orderId: order['order_id'],
-                  ),
+                  builder: (_) =>
+                      OrderDetailsScreen(orderId: order['order_id']),
                 ),
               );
             },
@@ -195,8 +239,8 @@ class _OrdersTabState extends State<_OrdersTab> {
                   Text(
                     '${order['product_name'] ?? '-'}',
                     style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                   const SizedBox(height: 8),
                   Text('Order ID: ${order['order_id'] ?? '-'}'),
@@ -250,10 +294,7 @@ class _OrdersFooter extends StatelessWidget {
       return Padding(
         padding: const EdgeInsets.only(top: 16, bottom: 24),
         child: Center(
-          child: Text(
-            errorMessage!,
-            style: const TextStyle(color: Colors.red),
-          ),
+          child: Text(errorMessage!, style: const TextStyle(color: Colors.red)),
         ),
       );
     }

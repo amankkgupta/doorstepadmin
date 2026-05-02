@@ -1,4 +1,6 @@
+import 'package:admindoorstep/auth/viewmodels/auth_view_model.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 class CreateProductScreen extends StatefulWidget {
@@ -48,6 +50,14 @@ class _CreateProductScreenState extends State<CreateProductScreen> {
     });
 
     try {
+      final categoryId = context.read<AuthViewModel>().user?.categoryId;
+      if (categoryId == null) {
+        setState(() {
+          _errorMessage = 'Unable to find admin category.';
+        });
+        return;
+      }
+
       final email = _userEmailController.text.trim();
       dynamic userId;
 
@@ -87,6 +97,7 @@ class _CreateProductScreenState extends State<CreateProductScreen> {
         'documents': documents,
         'criteria': otherDetails,
         'product_name_hindi': _productNameHindiController.text.trim(),
+        'category_id': categoryId,
       };
 
       if (userId != null) {
@@ -187,9 +198,7 @@ class _CreateProductScreenState extends State<CreateProductScreen> {
                       keyboardType: const TextInputType.numberWithOptions(
                         decimal: true,
                       ),
-                      decoration: const InputDecoration(
-                        labelText: 'Amount',
-                      ),
+                      decoration: const InputDecoration(labelText: 'Amount'),
                       validator: (value) {
                         if (value == null || value.trim().isEmpty) {
                           return 'Enter amount';
@@ -206,9 +215,7 @@ class _CreateProductScreenState extends State<CreateProductScreen> {
                       keyboardType: const TextInputType.numberWithOptions(
                         decimal: true,
                       ),
-                      decoration: const InputDecoration(
-                        labelText: 'MRP',
-                      ),
+                      decoration: const InputDecoration(labelText: 'MRP'),
                       validator: (value) {
                         if (value == null || value.trim().isEmpty) {
                           return 'Enter MRP';

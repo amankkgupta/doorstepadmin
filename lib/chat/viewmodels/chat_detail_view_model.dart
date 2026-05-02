@@ -8,6 +8,7 @@ class ChatDetailViewModel extends ChangeNotifier {
     String? conversationId,
     required this.userId,
     required this.supportUserId,
+    required this.categoryId,
     ChatRepository? repository,
   }) : _conversationId = (conversationId ?? '').trim().isEmpty
            ? null
@@ -19,6 +20,7 @@ class ChatDetailViewModel extends ChangeNotifier {
   String? _conversationId;
   final String userId;
   final String supportUserId;
+  final dynamic categoryId;
   final ChatRepository _repository;
   final List<ChatMessageItem> _messages = [];
 
@@ -47,7 +49,10 @@ class ChatDetailViewModel extends ChangeNotifier {
     final activeConversationId = _conversationId;
     if (activeConversationId != null && activeConversationId.isNotEmpty) {
       try {
-        await _repository.markSupportUnreadAsRead(activeConversationId);
+        await _repository.markSupportUnreadAsRead(
+          activeConversationId,
+          categoryId: categoryId,
+        );
       } on PostgrestException catch (error) {
         _errorMessage = error.message;
       } catch (error) {
@@ -82,6 +87,7 @@ class ChatDetailViewModel extends ChangeNotifier {
         conversationId: activeConversationId,
         offset: 0,
         limit: pageSize,
+        categoryId: categoryId,
       );
       _messages.addAll(items.reversed);
       _hasMore = items.length == pageSize;
@@ -113,6 +119,7 @@ class ChatDetailViewModel extends ChangeNotifier {
         conversationId: activeConversationId,
         offset: _messages.length,
         limit: pageSize,
+        categoryId: categoryId,
       );
       _messages.insertAll(0, items.reversed);
       _hasMore = items.length == pageSize;
@@ -144,6 +151,7 @@ class ChatDetailViewModel extends ChangeNotifier {
         userId: userId,
         supportUserId: supportUserId,
         message: message,
+        categoryId: categoryId,
       );
       final insertedConversationId = inserted.conversationId.trim();
       if (insertedConversationId.isNotEmpty) {

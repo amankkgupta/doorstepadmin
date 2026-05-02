@@ -1,19 +1,28 @@
-import 'dart:async';
-
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 enum SignInResult { success, failure }
 
+class AdminSession {
+  const AdminSession({
+    required this.id,
+    required this.email,
+    required this.categoryId,
+  });
+
+  final String id;
+  final String email;
+  final dynamic categoryId;
+}
+
 class AuthViewModel extends ChangeNotifier {
-  StreamSubscription<AuthState>? _authSubscription;
-  User? _user;
+  AdminSession? _user;
   String? _errorMessage;
   bool _isLoading = false;
   bool _isInitializing = true;
   bool _bootstrapped = false;
 
-  User? get user => _user;
+  AdminSession? get user => _user;
   String? get errorMessage => _errorMessage;
   bool get isLoading => _isLoading;
   bool get isInitializing => _isInitializing;
@@ -25,32 +34,6 @@ class AuthViewModel extends ChangeNotifier {
     }
 
     _bootstrapped = true;
-
-    if (!_isSupabaseReady) {
-      _isInitializing = false;
-      notifyListeners();
-      return;
-    }
-
-    _authSubscription = Supabase.instance.client.auth.onAuthStateChange.listen((
-      event,
-    ) {
-      _user =
-          event.session?.user ??
-          Supabase.instance.client.auth.currentSession?.user ??
-          Supabase.instance.client.auth.currentUser;
-      _isInitializing = false;
-      notifyListeners();
-    });
-
-    _user =
-        Supabase.instance.client.auth.currentSession?.user ??
-        Supabase.instance.client.auth.currentUser;
-
-    if (_user != null) {
-      _errorMessage = null;
-    }
-
     _isInitializing = false;
     notifyListeners();
   }
@@ -68,23 +51,40 @@ class AuthViewModel extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final response = await Supabase.instance.client.auth.signInWithPassword(
-        email: email.trim(),
-        password: password,
-      );
-      _user = response.user ?? Supabase.instance.client.auth.currentUser;
+      final normalizedEmail = email.trim().toLowerCase();
+      final admin = await Supabase.instance.client
+          .from('admins')
+          .select()
+          .eq('email', normalizedEmail)
+          .maybeSingle();
 
-      if (_user == null) {
-        _errorMessage = 'Unable to sign in right now.';
+      if (admin == null || (admin['password'] ?? '').toString() != password) {
+        _errorMessage = 'Invalid email or password.';
         return SignInResult.failure;
       }
+
+      await Supabase.instance.client.auth.signInWithPassword(
+        email: normalizedEmail,
+        password: password,
+      );
+
+      final adminId = _pickAdminId(admin);
+      _user = AdminSession(
+        id: adminId.isEmpty ? normalizedEmail : adminId,
+        email: (admin['email'] ?? normalizedEmail).toString(),
+        categoryId: admin['category_id'],
+      );
 
       return SignInResult.success;
     } on AuthException catch (error) {
       _errorMessage = error.message;
       return SignInResult.failure;
+    } on PostgrestException catch (error) {
+      debugPrint('Admin sign-in query failed: ${error.message}');
+      _errorMessage = 'Unable to sign in right now.';
+      return SignInResult.failure;
     } catch (error) {
-      debugPrint('Email sign-in failed: $error');
+      debugPrint('Admin sign-in failed: $error');
       _errorMessage = 'Unable to sign in right now.';
       return SignInResult.failure;
     } finally {
@@ -102,13 +102,13 @@ class AuthViewModel extends ChangeNotifier {
     _errorMessage = null;
     notifyListeners();
 
+    _user = null;
     try {
       await Supabase.instance.client.auth.signOut();
-      _user = null;
     } on AuthException catch (error) {
       _errorMessage = error.message;
     } catch (error) {
-      debugPrint('Sign-out failed: $error');
+      debugPrint('Supabase sign-out failed: $error');
       _errorMessage = 'Unable to sign out right now.';
     } finally {
       _isLoading = false;
@@ -124,9 +124,15 @@ class AuthViewModel extends ChangeNotifier {
       return false;
     }
   }
-  @override
-  void dispose() {
-    _authSubscription?.cancel();
-    super.dispose();
+
+  String _pickAdminId(Map<String, dynamic> admin) {
+    final candidates = [admin['admin_id'], admin['id'], admin['user_id']];
+    for (final candidate in candidates) {
+      final value = (candidate ?? '').toString().trim();
+      if (value.isNotEmpty) {
+        return value;
+      }
+    }
+    return '';
   }
 }
