@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:admindoorstep/chat/models/conversation_summary.dart';
 import 'package:admindoorstep/chat/models/chat_user_search_result.dart';
 import 'package:admindoorstep/chat/repositories/chat_repository.dart';
@@ -12,7 +14,9 @@ class SupportInboxViewModel extends ChangeNotifier {
 
   final dynamic categoryId;
   final ChatRepository _repository;
+  final SupabaseClient _client = Supabase.instance.client;
   final List<ConversationSummary> _conversations = [];
+  RealtimeChannel? _conversationChannel;
 
   List<ConversationSummary> get conversations =>
       List.unmodifiable(_conversations);
@@ -83,6 +87,7 @@ class SupportInboxViewModel extends ChangeNotifier {
       return;
     }
 
+    _subscribeToConversationChanges();
     _isLoading = true;
     _errorMessage = null;
     _hasMore = true;
@@ -143,7 +148,7 @@ class SupportInboxViewModel extends ChangeNotifier {
     }
 
     final existing = _conversations[index];
-    _conversations.removeAt(index);
+    _conversations[index] = existing.copyWith(supportUnread: 0);
     notifyListeners();
 
     try {
@@ -153,12 +158,125 @@ class SupportInboxViewModel extends ChangeNotifier {
       );
       return true;
     } catch (error) {
-      _conversations.insert(index, existing);
+      _conversations[index] = existing;
       _errorMessage = error is PostgrestException
           ? error.message
           : 'Unable to mark conversation as read.';
       notifyListeners();
       return false;
     }
+  }
+
+  void _subscribeToConversationChanges() {
+    if (_conversationChannel != null || categoryId == null) {
+      return;
+    }
+
+    _conversationChannel = _client
+        .channel('support-inbox-$categoryId')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'conversations',
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'category_id',
+            value: categoryId,
+          ),
+          callback: _handleConversationChange,
+        )
+        .subscribe();
+  }
+
+  Future<void> _handleConversationChange(PostgresChangePayload payload) async {
+    final record = payload.eventType == PostgresChangeEvent.delete
+        ? payload.oldRecord
+        : payload.newRecord;
+    final conversationId = (record['conversation_id'] ?? '').toString().trim();
+    if (conversationId.isEmpty) {
+      return;
+    }
+
+    if (payload.eventType == PostgresChangeEvent.delete) {
+      _removeConversation(conversationId);
+      return;
+    }
+
+    final existingIndex = _conversations.indexWhere(
+      (item) => item.conversationId == conversationId,
+    );
+    final messageId = (record['message_id'] ?? '').toString();
+    if (existingIndex != -1 &&
+        messageId == _conversations[existingIndex].messageId) {
+      _conversations[existingIndex] = _conversations[existingIndex].copyWith(
+        supportUnread:
+            int.tryParse((record['support_unread'] ?? 0).toString()) ?? 0,
+        modifiedAt: DateTime.tryParse((record['modified_at'] ?? '').toString()),
+      );
+      _sortConversations();
+      notifyListeners();
+      return;
+    }
+
+    try {
+      final summary = await _repository.fetchConversationSummary(
+        conversationId: conversationId,
+        categoryId: categoryId,
+      );
+      if (summary == null) {
+        _removeConversation(conversationId);
+        return;
+      }
+      _upsertConversation(summary);
+    } catch (error) {
+      debugPrint('Realtime conversation refresh failed: $error');
+    }
+  }
+
+  void _upsertConversation(ConversationSummary summary) {
+    final existingIndex = _conversations.indexWhere(
+      (item) => item.conversationId == summary.conversationId,
+    );
+    if (existingIndex != -1) {
+      _conversations[existingIndex] = summary;
+    } else {
+      _conversations.insert(0, summary);
+    }
+    _sortConversations();
+    notifyListeners();
+  }
+
+  void _sortConversations() {
+    _conversations.sort((a, b) {
+      final aModifiedAt = a.modifiedAt;
+      final bModifiedAt = b.modifiedAt;
+      if (aModifiedAt == null && bModifiedAt == null) {
+        return 0;
+      }
+      if (aModifiedAt == null) {
+        return 1;
+      }
+      if (bModifiedAt == null) {
+        return -1;
+      }
+      return bModifiedAt.compareTo(aModifiedAt);
+    });
+  }
+
+  void _removeConversation(String conversationId) {
+    final beforeLength = _conversations.length;
+    _conversations.removeWhere((item) => item.conversationId == conversationId);
+    if (_conversations.length != beforeLength) {
+      notifyListeners();
+    }
+  }
+
+  @override
+  void dispose() {
+    final channel = _conversationChannel;
+    if (channel != null) {
+      unawaited(_client.removeChannel(channel));
+    }
+    super.dispose();
   }
 }

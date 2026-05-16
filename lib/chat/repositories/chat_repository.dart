@@ -43,24 +43,47 @@ class ChatRepository {
     final userMap = await _fetchUsers(userIds);
     final messageMap = await _fetchMessagesByIds(messageIds);
 
-    return conversations.map((row) {
-      final userId = (row['user_id'] ?? '').toString();
-      final user = userMap[userId] ?? const <String, dynamic>{};
-      final messageId = (row['message_id'] ?? '').toString();
-      final message = messageMap[messageId] ?? const <String, dynamic>{};
+    return conversations
+        .map((row) => _summaryFromRow(row, userMap, messageMap))
+        .toList();
+  }
 
-      return ConversationSummary(
-        conversationId: (row['conversation_id'] ?? '').toString(),
-        userId: userId,
-        messageId: messageId,
-        supportUnread:
-            int.tryParse((row['support_unread'] ?? 0).toString()) ?? 0,
-        modifiedAt: DateTime.tryParse((row['modified_at'] ?? '').toString()),
-        userName: _pickUserName(user, userId),
-        userEmail: (user['email'] ?? '').toString(),
-        latestMessagePreview: (message['message'] ?? '').toString(),
+  Future<ConversationSummary?> fetchConversationSummary({
+    required String conversationId,
+    required dynamic categoryId,
+  }) async {
+    final normalizedConversationId = conversationId.trim();
+    if (normalizedConversationId.isEmpty || categoryId == null) {
+      return null;
+    }
+
+    try {
+      final row = await _client
+          .from('conversations')
+          .select(
+            'conversation_id, user_id, message_id, support_unread, modified_at',
+          )
+          .eq('conversation_id', normalizedConversationId)
+          .eq('category_id', categoryId)
+          .maybeSingle();
+
+      if (row == null) {
+        return null;
+      }
+
+      final userId = (row['user_id'] ?? '').toString();
+      final messageId = (row['message_id'] ?? '').toString();
+      final userMap = await _fetchUsers(userId.isEmpty ? [] : [userId]);
+      final messageMap = await _fetchMessagesByIds(
+        messageId.isEmpty ? [] : [messageId],
       );
-    }).toList();
+      return _summaryFromRow(row, userMap, messageMap);
+    } on PostgrestException {
+      rethrow;
+    } catch (error) {
+      debugPrint('Fetch conversation summary failed: $error');
+      throw Exception('Unable to fetch conversation.');
+    }
   }
 
   Future<List<dynamic>> _fetchConversationRows({
@@ -91,6 +114,28 @@ class ChatRepository {
       debugPrint('Fetch conversations failed: $error');
       throw Exception('Unable to fetch conversations.');
     }
+  }
+
+  ConversationSummary _summaryFromRow(
+    Map<String, dynamic> row,
+    Map<String, Map<String, dynamic>> userMap,
+    Map<String, Map<String, dynamic>> messageMap,
+  ) {
+    final userId = (row['user_id'] ?? '').toString();
+    final messageId = (row['message_id'] ?? '').toString();
+    final user = userMap[userId] ?? const <String, dynamic>{};
+    final message = messageMap[messageId] ?? const <String, dynamic>{};
+
+    return ConversationSummary(
+      conversationId: (row['conversation_id'] ?? '').toString(),
+      userId: userId,
+      messageId: messageId,
+      supportUnread: int.tryParse((row['support_unread'] ?? 0).toString()) ?? 0,
+      modifiedAt: DateTime.tryParse((row['modified_at'] ?? '').toString()),
+      userName: _pickUserName(user, userId),
+      userEmail: (user['email'] ?? '').toString(),
+      latestMessagePreview: (message['message'] ?? '').toString(),
+    );
   }
 
   Future<void> markSupportUnreadAsRead(

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:admindoorstep/chat/models/chat_message_item.dart';
 import 'package:admindoorstep/chat/repositories/chat_repository.dart';
 import 'package:flutter/foundation.dart';
@@ -22,7 +24,9 @@ class ChatDetailViewModel extends ChangeNotifier {
   final String supportUserId;
   final dynamic categoryId;
   final ChatRepository _repository;
+  final SupabaseClient _client = Supabase.instance.client;
   final List<ChatMessageItem> _messages = [];
+  RealtimeChannel? _chatChannel;
 
   List<ChatMessageItem> get messages => List.unmodifiable(_messages);
 
@@ -58,6 +62,7 @@ class ChatDetailViewModel extends ChangeNotifier {
       } catch (error) {
         _errorMessage = error.toString().replaceFirst('Exception: ', '');
       }
+      _subscribeToChatChanges(activeConversationId);
     }
     await loadInitial();
   }
@@ -156,8 +161,9 @@ class ChatDetailViewModel extends ChangeNotifier {
       final insertedConversationId = inserted.conversationId.trim();
       if (insertedConversationId.isNotEmpty) {
         _conversationId = insertedConversationId;
+        _subscribeToChatChanges(insertedConversationId);
       }
-      _messages.add(inserted);
+      _addMessageIfMissing(inserted);
       _hasMore = false;
       return true;
     } on PostgrestException catch (error) {
@@ -170,5 +176,87 @@ class ChatDetailViewModel extends ChangeNotifier {
       _isSending = false;
       notifyListeners();
     }
+  }
+
+  void _subscribeToChatChanges(String conversationId) {
+    final normalizedConversationId = conversationId.trim();
+    if (normalizedConversationId.isEmpty || _chatChannel != null) {
+      return;
+    }
+
+    _chatChannel = _client
+        .channel('chat-detail-$normalizedConversationId')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.insert,
+          schema: 'public',
+          table: 'chats',
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'conversation_id',
+            value: normalizedConversationId,
+          ),
+          callback: _handleChatInsert,
+        )
+        .subscribe();
+  }
+
+  void _handleChatInsert(PostgresChangePayload payload) {
+    final message = ChatMessageItem.fromMap(payload.newRecord);
+    final didAdd = _addMessageIfMissing(message);
+    final isUserMessage =
+        message.senderId.isNotEmpty && message.senderId == userId;
+    if (isUserMessage) {
+      unawaited(
+        _repository.markSupportUnreadAsRead(
+          message.conversationId,
+          categoryId: categoryId,
+        ),
+      );
+    }
+    if (didAdd) {
+      notifyListeners();
+    }
+  }
+
+  bool _addMessageIfMissing(ChatMessageItem message) {
+    final messageId = message.messageId.trim();
+    final exists = _messages.any((item) {
+      if (messageId.isNotEmpty && item.messageId == messageId) {
+        return true;
+      }
+      return item.conversationId == message.conversationId &&
+          item.senderId == message.senderId &&
+          item.message == message.message &&
+          item.createdAt == message.createdAt;
+    });
+    if (exists) {
+      return false;
+    }
+
+    _messages.add(message);
+    _messages.sort((a, b) {
+      final aCreatedAt = a.createdAt;
+      final bCreatedAt = b.createdAt;
+      if (aCreatedAt == null && bCreatedAt == null) {
+        return 0;
+      }
+      if (aCreatedAt == null) {
+        return 1;
+      }
+      if (bCreatedAt == null) {
+        return -1;
+      }
+      return aCreatedAt.compareTo(bCreatedAt);
+    });
+    return true;
+  }
+
+  @override
+  void dispose() {
+    final channel = _chatChannel;
+    if (channel != null) {
+      unawaited(_client.removeChannel(channel));
+    }
+    super.dispose();
   }
 }
