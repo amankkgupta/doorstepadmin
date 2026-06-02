@@ -17,10 +17,6 @@ class ChatRepository {
     required int limit,
     required dynamic categoryId,
   }) async {
-    if (categoryId == null) {
-      return const [];
-    }
-
     final rows = await _fetchConversationRows(
       offset: offset,
       limit: limit,
@@ -53,19 +49,23 @@ class ChatRepository {
     required dynamic categoryId,
   }) async {
     final normalizedConversationId = conversationId.trim();
-    if (normalizedConversationId.isEmpty || categoryId == null) {
+    if (normalizedConversationId.isEmpty) {
       return null;
     }
 
     try {
-      final row = await _client
+      var query = _client
           .from('conversations')
           .select(
             'conversation_id, user_id, message_id, support_unread, modified_at',
           )
-          .eq('conversation_id', normalizedConversationId)
-          .eq('category_id', categoryId)
-          .maybeSingle();
+          .eq('conversation_id', normalizedConversationId);
+
+      if (categoryId != null) {
+        query = query.eq('category_id', categoryId);
+      }
+
+      final row = await query.maybeSingle();
 
       if (row == null) {
         return null;
@@ -97,12 +97,17 @@ class ChatRepository {
         'offset=$offset, limit=$limit',
       );
 
-      final response = await _client
+      var query = _client
           .from('conversations')
           .select(
             'conversation_id, user_id, message_id, support_unread, modified_at',
-          )
-          .eq('category_id', categoryId)
+          );
+
+      if (categoryId != null) {
+        query = query.eq('category_id', categoryId);
+      }
+
+      final response = await query
           .order('modified_at', ascending: false)
           .range(offset, offset + limit - 1);
 
@@ -142,16 +147,21 @@ class ChatRepository {
     String conversationId, {
     required dynamic categoryId,
   }) async {
-    if (conversationId.isEmpty || categoryId == null) {
+    if (conversationId.isEmpty) {
       return;
     }
 
     try {
-      await _client
+      var query = _client
           .from('conversations')
           .update({'support_unread': 0})
-          .eq('conversation_id', conversationId)
-          .eq('category_id', categoryId);
+          .eq('conversation_id', conversationId);
+
+      if (categoryId != null) {
+        query = query.eq('category_id', categoryId);
+      }
+
+      await query;
     } on PostgrestException {
       rethrow;
     } catch (_) {
@@ -216,17 +226,21 @@ class ChatRepository {
       final insertedMessage = ChatMessageItem.fromMap(inserted);
 
       try {
-        final conversation = await _client
+        var conversationQuery = _client
             .from('conversations')
             .select('user_unread')
-            .eq('conversation_id', resolvedConversationId)
-            .eq('category_id', categoryId)
-            .maybeSingle();
+            .eq('conversation_id', resolvedConversationId);
+
+        if (categoryId != null) {
+          conversationQuery = conversationQuery.eq('category_id', categoryId);
+        }
+
+        final conversation = await conversationQuery.maybeSingle();
 
         final currentUserUnread =
             int.tryParse((conversation?['user_unread'] ?? 0).toString()) ?? 0;
 
-        await _client
+        var updateQuery = _client
             .from('conversations')
             .update({
               'message_id': insertedMessage.messageId,
@@ -234,8 +248,13 @@ class ChatRepository {
               'user_unread': currentUserUnread + 1,
               'support_unread': 0,
             })
-            .eq('conversation_id', resolvedConversationId)
-            .eq('category_id', categoryId);
+            .eq('conversation_id', resolvedConversationId);
+
+        if (categoryId != null) {
+          updateQuery = updateQuery.eq('category_id', categoryId);
+        }
+
+        await updateQuery;
       } on PostgrestException {
         rethrow;
       } catch (_) {
@@ -259,7 +278,7 @@ class ChatRepository {
     dynamic categoryId,
   ) async {
     final normalizedEmail = emailPrefix.trim().toLowerCase();
-    if (normalizedEmail.isEmpty || categoryId == null) {
+    if (normalizedEmail.isEmpty) {
       return const [];
     }
 
@@ -308,17 +327,21 @@ class ChatRepository {
     List<String> userIds, {
     required dynamic categoryId,
   }) async {
-    if (userIds.isEmpty || categoryId == null) {
+    if (userIds.isEmpty) {
       return const {};
     }
 
     try {
-      final rows = await _client
+      var query = _client
           .from('conversations')
           .select('user_id, conversation_id, modified_at')
-          .inFilter('user_id', userIds)
-          .eq('category_id', categoryId)
-          .order('modified_at', ascending: false);
+          .inFilter('user_id', userIds);
+
+      if (categoryId != null) {
+        query = query.eq('category_id', categoryId);
+      }
+
+      final rows = await query.order('modified_at', ascending: false);
 
       final map = <String, String>{};
       for (final row in List<Map<String, dynamic>>.from(rows)) {
@@ -342,16 +365,21 @@ class ChatRepository {
     required dynamic categoryId,
   }) async {
     final normalizedUserId = userId.trim();
-    if (normalizedUserId.isEmpty || categoryId == null) {
+    if (normalizedUserId.isEmpty) {
       return null;
     }
 
     try {
-      final row = await _client
+      var query = _client
           .from('conversations')
           .select('conversation_id')
-          .eq('user_id', normalizedUserId)
-          .eq('category_id', categoryId)
+          .eq('user_id', normalizedUserId);
+
+      if (categoryId != null) {
+        query = query.eq('category_id', categoryId);
+      }
+
+      final row = await query
           .order('modified_at', ascending: false)
           .limit(1)
           .maybeSingle();
@@ -377,13 +405,13 @@ class ChatRepository {
         categoryId: categoryId,
       );
       if (!canUseConversation) {
-        throw Exception('Unable to find conversation for this category.');
+        throw Exception('Unable to find conversation.');
       }
       return existingConversationId;
     }
 
     final normalizedUserId = userId.trim();
-    if (normalizedUserId.isEmpty || categoryId == null) {
+    if (normalizedUserId.isEmpty) {
       throw Exception('User id is required to send message.');
     }
 
@@ -397,16 +425,21 @@ class ChatRepository {
 
     try {
       final nowIso = DateTime.now().toIso8601String();
+      final conversationPayload = <String, dynamic>{
+        'user_id': normalizedUserId,
+        'user_unread': 0,
+        'support_unread': 0,
+        'created_at': nowIso,
+        'modified_at': nowIso,
+      };
+
+      if (categoryId != null) {
+        conversationPayload['category_id'] = categoryId;
+      }
+
       final insertedConversation = await _client
           .from('conversations')
-          .insert({
-            'user_id': normalizedUserId,
-            'category_id': categoryId,
-            'user_unread': 0,
-            'support_unread': 0,
-            'created_at': nowIso,
-            'modified_at': nowIso,
-          })
+          .insert(conversationPayload)
           .select('conversation_id')
           .single();
 
@@ -429,23 +462,27 @@ class ChatRepository {
     required dynamic categoryId,
   }) async {
     final normalizedConversationId = conversationId.trim();
-    if (normalizedConversationId.isEmpty || categoryId == null) {
+    if (normalizedConversationId.isEmpty) {
       return false;
     }
 
     try {
-      final row = await _client
+      var query = _client
           .from('conversations')
           .select('conversation_id')
-          .eq('conversation_id', normalizedConversationId)
-          .eq('category_id', categoryId)
-          .maybeSingle();
+          .eq('conversation_id', normalizedConversationId);
+
+      if (categoryId != null) {
+        query = query.eq('category_id', categoryId);
+      }
+
+      final row = await query.maybeSingle();
 
       return row != null;
     } on PostgrestException {
       rethrow;
     } catch (_) {
-      throw Exception('Unable to find conversation for this category.');
+      throw Exception('Unable to find conversation.');
     }
   }
 

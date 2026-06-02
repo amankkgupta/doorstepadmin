@@ -14,15 +14,8 @@ class SupportInboxScreen extends StatelessWidget {
     final categoryId = context.watch<AuthViewModel>().user?.categoryId;
     debugPrint('Support inbox admin category_id: $categoryId');
 
-    if (categoryId == null) {
-      return Scaffold(
-        appBar: AppBar(title: Text('Support Inbox')),
-        body: const Center(child: Text('Unable to find admin category.')),
-      );
-    }
-
     return ChangeNotifierProvider(
-      key: ValueKey(categoryId),
+      key: ValueKey(categoryId ?? 'all-categories'),
       create: (_) =>
           SupportInboxViewModel(categoryId: categoryId)..loadInitial(),
       child: const _SupportInboxView(),

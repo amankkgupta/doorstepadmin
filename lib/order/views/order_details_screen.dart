@@ -49,16 +49,8 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
 
   Future<Map<String, dynamic>?> _fetchOrder() async {
     final categoryId = context.read<AuthViewModel>().user?.categoryId;
-    if (categoryId == null) {
-      return null;
-    }
 
-    final productIds = await _fetchProductIdsForCategory(categoryId);
-    if (productIds.isEmpty) {
-      return null;
-    }
-
-    final response = await Supabase.instance.client
+    var query = Supabase.instance.client
         .from('orders')
         .select(
           'order_id, created_at, message, status, first_document_name, '
@@ -66,9 +58,18 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
           'second_document_name, second_document_url, phone, support_phone, '
           'is_others, applicant_name, product_name, user_id',
         )
-        .eq('order_id', _currentOrderId)
-        .inFilter('product_id', productIds)
-        .maybeSingle();
+        .eq('order_id', _currentOrderId);
+
+    if (categoryId != null) {
+      final productIds = await _fetchProductIdsForCategory(categoryId);
+      if (productIds.isEmpty) {
+        return null;
+      }
+
+      query = query.inFilter('product_id', productIds);
+    }
+
+    final response = await query.maybeSingle();
 
     return response;
   }
@@ -107,36 +108,44 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
 
     try {
       final categoryId = context.read<AuthViewModel>().user?.categoryId;
-      final productIds = categoryId == null
-          ? const <dynamic>[]
-          : await _fetchProductIdsForCategory(categoryId);
+      List<dynamic>? productIds;
+      if (categoryId != null) {
+        productIds = await _fetchProductIdsForCategory(categoryId);
 
-      if (productIds.isEmpty) {
-        if (!mounted) {
+        if (productIds.isEmpty) {
+          if (!mounted) {
+            return;
+          }
+          setState(() {
+            _previousOrderId = null;
+            _nextOrderId = null;
+            _hasResolvedAdjacentOrders = true;
+          });
           return;
         }
-        setState(() {
-          _previousOrderId = null;
-          _nextOrderId = null;
-          _hasResolvedAdjacentOrders = true;
-        });
-        return;
       }
 
-      final previousResponse = await Supabase.instance.client
+      var previousQuery = Supabase.instance.client
           .from('orders')
           .select('order_id')
-          .eq('status', status)
-          .inFilter('product_id', productIds)
+          .eq('status', status);
+
+      var nextQuery = Supabase.instance.client
+          .from('orders')
+          .select('order_id')
+          .eq('status', status);
+
+      if (productIds != null) {
+        previousQuery = previousQuery.inFilter('product_id', productIds);
+        nextQuery = nextQuery.inFilter('product_id', productIds);
+      }
+
+      final previousResponse = await previousQuery
           .lt('created_at', createdAtText)
           .order('created_at', ascending: false)
           .limit(1);
 
-      final nextResponse = await Supabase.instance.client
-          .from('orders')
-          .select('order_id')
-          .eq('status', status)
-          .inFilter('product_id', productIds)
+      final nextResponse = await nextQuery
           .gt('created_at', createdAtText)
           .order('created_at', ascending: true)
           .limit(1);

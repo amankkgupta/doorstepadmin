@@ -51,13 +51,6 @@ class _CreateProductScreenState extends State<CreateProductScreen> {
 
     try {
       final categoryId = context.read<AuthViewModel>().user?.categoryId;
-      if (categoryId == null) {
-        setState(() {
-          _errorMessage = 'Unable to find admin category.';
-        });
-        return;
-      }
-
       final email = _userEmailController.text.trim();
       dynamic userId;
 
@@ -97,8 +90,11 @@ class _CreateProductScreenState extends State<CreateProductScreen> {
         'documents': documents,
         'criteria': otherDetails,
         'product_name_hindi': _productNameHindiController.text.trim(),
-        'category_id': categoryId,
       };
+
+      if (categoryId != null) {
+        payload['category_id'] = categoryId;
+      }
 
       if (userId != null) {
         payload['user_id'] = userId;

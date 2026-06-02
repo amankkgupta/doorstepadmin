@@ -61,19 +61,6 @@ class HomeScreen extends StatelessWidget {
                           children: [
                             _FeatureCard(
                               width: cardWidth,
-                              icon: Icons.add_box_outlined,
-                              title: 'Create Product',
-                              description:
-                                  'Add new products and manage listing details.',
-                              onTap: () {
-                                Navigator.pushNamed(
-                                  context,
-                                  AppRoutes.createProduct,
-                                );
-                              },
-                            ),
-                            _FeatureCard(
-                              width: cardWidth,
                               icon: Icons.receipt_long_outlined,
                               title: 'View orders',
                               description:
@@ -108,6 +95,19 @@ class HomeScreen extends StatelessWidget {
                                 Navigator.pushNamed(
                                   context,
                                   AppRoutes.createUpdate,
+                                );
+                              },
+                            ),
+                            _FeatureCard(
+                              width: cardWidth,
+                              icon: Icons.add_box_outlined,
+                              title: 'Create Product',
+                              description:
+                                  'Add new products and manage listing details.',
+                              onTap: () {
+                                Navigator.pushNamed(
+                                  context,
+                                  AppRoutes.createProduct,
                                 );
                               },
                             ),

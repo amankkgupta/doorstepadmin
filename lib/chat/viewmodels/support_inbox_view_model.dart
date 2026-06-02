@@ -168,24 +168,34 @@ class SupportInboxViewModel extends ChangeNotifier {
   }
 
   void _subscribeToConversationChanges() {
-    if (_conversationChannel != null || categoryId == null) {
+    if (_conversationChannel != null) {
       return;
     }
 
-    _conversationChannel = _client
-        .channel('support-inbox-$categoryId')
-        .onPostgresChanges(
-          event: PostgresChangeEvent.all,
-          schema: 'public',
-          table: 'conversations',
-          filter: PostgresChangeFilter(
-            type: PostgresChangeFilterType.eq,
-            column: 'category_id',
-            value: categoryId,
-          ),
-          callback: _handleConversationChange,
-        )
-        .subscribe();
+    final channel = _client.channel('support-inbox-${categoryId ?? 'all'}');
+
+    _conversationChannel = categoryId == null
+        ? channel
+              .onPostgresChanges(
+                event: PostgresChangeEvent.all,
+                schema: 'public',
+                table: 'conversations',
+                callback: _handleConversationChange,
+              )
+              .subscribe()
+        : channel
+              .onPostgresChanges(
+                event: PostgresChangeEvent.all,
+                schema: 'public',
+                table: 'conversations',
+                filter: PostgresChangeFilter(
+                  type: PostgresChangeFilterType.eq,
+                  column: 'category_id',
+                  value: categoryId,
+                ),
+                callback: _handleConversationChange,
+              )
+              .subscribe();
   }
 
   Future<void> _handleConversationChange(PostgresChangePayload payload) async {

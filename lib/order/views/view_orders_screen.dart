@@ -14,12 +14,21 @@ class ViewOrdersScreen extends StatefulWidget {
 
 class _ViewOrdersScreenState extends State<ViewOrdersScreen>
     with SingleTickerProviderStateMixin {
+  static const List<String> _statusFilters = [
+    'in_progress',
+    'applied',
+    'completed',
+    'rejected',
+    'action_needed',
+    'refunded',
+  ];
+
   late final TabController _tabController;
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    _tabController = TabController(length: _statusFilters.length, vsync: this);
   }
 
   @override
@@ -35,20 +44,31 @@ class _ViewOrdersScreenState extends State<ViewOrdersScreen>
         title: const Text('View Orders'),
         bottom: TabBar(
           controller: _tabController,
-          tabs: const [
-            Tab(text: 'In Progress'),
-            Tab(text: 'Applied'),
-          ],
+          isScrollable: true,
+          tabAlignment: TabAlignment.start,
+          tabs: _statusFilters
+              .map((status) => Tab(text: _formatStatusLabel(status)))
+              .toList(),
         ),
       ),
       body: TabBarView(
         controller: _tabController,
-        children: const [
-          _OrdersTab(status: 'in_progress'),
-          _OrdersTab(status: 'applied'),
-        ],
+        children: _statusFilters
+            .map((status) => _OrdersTab(status: status))
+            .toList(),
       ),
     );
+  }
+
+  String _formatStatusLabel(String status) {
+    return status
+        .split('_')
+        .map(
+          (word) => word.isEmpty
+              ? word
+              : '${word[0].toUpperCase()}${word.substring(1)}',
+        )
+        .join(' ');
   }
 }
 
@@ -110,28 +130,25 @@ class _OrdersTabState extends State<_OrdersTab> {
       final to = from + _pageSize - 1;
       final categoryId = context.read<AuthViewModel>().user?.categoryId;
 
-      if (categoryId == null) {
-        setState(() {
-          _errorMessage = 'Unable to find admin category.';
-          _hasMore = false;
-        });
-        return;
-      }
-
-      final productIds = await _fetchProductIdsForCategory(categoryId);
-
-      if (productIds.isEmpty) {
-        setState(() {
-          _hasMore = false;
-        });
-        return;
-      }
-
-      final response = await Supabase.instance.client
+      var query = Supabase.instance.client
           .from('orders')
           .select('order_id, product_name, applicant_name, created_at')
-          .eq('status', widget.status)
-          .inFilter('product_id', productIds)
+          .eq('status', widget.status);
+
+      if (categoryId != null) {
+        final productIds = await _fetchProductIdsForCategory(categoryId);
+
+        if (productIds.isEmpty) {
+          setState(() {
+            _hasMore = false;
+          });
+          return;
+        }
+
+        query = query.inFilter('product_id', productIds);
+      }
+
+      final response = await query
           .order('created_at', ascending: false)
           .range(from, to);
 
