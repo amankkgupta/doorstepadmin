@@ -72,6 +72,15 @@ class NotificationService {
         _handleNotificationTap(message);
       });
 
+      final fcmToken = await getFCMToken();
+      _logger.info(
+        'FCM token at Firebase initialization',
+        data: {
+          'hasToken': fcmToken != null && fcmToken.isNotEmpty,
+          'fcmToken': fcmToken,
+        },
+      );
+
       _logger.info('Firebase Messaging initialized successfully');
     } catch (e, stackTrace) {
       _logger.error(

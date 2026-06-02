@@ -1,3 +1,6 @@
+import 'package:admindoorstep/app_logger.dart';
+import 'package:admindoorstep/repositories/fcm_token_repository.dart';
+import 'package:admindoorstep/services/notification_service.dart';
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -16,6 +19,10 @@ class AdminSession {
 }
 
 class AuthViewModel extends ChangeNotifier {
+  static final AppLogger _logger = AppLogger();
+  final FCMTokenRepository _fcmTokenRepository = FCMTokenRepository();
+  final NotificationService _notificationService = NotificationService();
+
   AdminSession? _user;
   String? _errorMessage;
   bool _isLoading = false;
@@ -74,6 +81,8 @@ class AuthViewModel extends ChangeNotifier {
         email: (admin['email'] ?? normalizedEmail).toString(),
         categoryId: admin['category_id'],
       );
+
+      await _updateAndVerifyFCMTokenAfterSignIn(userId: _user!.id);
 
       return SignInResult.success;
     } on AuthException catch (error) {
@@ -134,5 +143,44 @@ class AuthViewModel extends ChangeNotifier {
       }
     }
     return '';
+  }
+
+  Future<void> _updateAndVerifyFCMTokenAfterSignIn({
+    required String userId,
+  }) async {
+    try {
+      final fcmToken = await _notificationService.getFCMToken();
+      if (fcmToken == null || fcmToken.trim().isEmpty) {
+        _logger.warning(
+          'FCM token update skipped after sign-in',
+          data: {'userId': userId, 'hasToken': false},
+        );
+        return;
+      }
+
+      final saved = await _fcmTokenRepository.saveFCMToken(
+        userId: userId,
+        fcmToken: fcmToken,
+      );
+
+      if (!saved) {
+        _logger.warning(
+          'FCM token verification skipped because save failed after sign-in',
+          data: {'userId': userId},
+        );
+        return;
+      }
+
+      await _fcmTokenRepository.verifyFCMTokenStored(
+        userId: userId,
+        expectedFcmToken: fcmToken,
+      );
+    } catch (error, stackTrace) {
+      _logger.error(
+        'FCM token update check failed after sign-in',
+        data: {'userId': userId, 'error': error.toString()},
+        stackTrace: stackTrace,
+      );
+    }
   }
 }
