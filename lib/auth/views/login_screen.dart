@@ -22,8 +22,19 @@ class _LoginScreenState extends State<LoginScreen> {
       if (!mounted) {
         return;
       }
-      context.read<AuthViewModel>().bootstrap();
+      _bootstrapAndRedirect();
     });
+  }
+
+  Future<void> _bootstrapAndRedirect() async {
+    final authViewModel = context.read<AuthViewModel>();
+    await authViewModel.bootstrap();
+
+    if (!mounted || !authViewModel.isLoggedIn) {
+      return;
+    }
+
+    Navigator.pushReplacementNamed(context, AppRoutes.home);
   }
 
   @override
@@ -52,6 +63,8 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final authViewModel = context.watch<AuthViewModel>();
+
     return Scaffold(
       body: SafeArea(
         child: Center(
@@ -59,12 +72,14 @@ class _LoginScreenState extends State<LoginScreen> {
             constraints: const BoxConstraints(maxWidth: 480),
             child: Padding(
               padding: const EdgeInsets.all(24),
-              child: _LoginCard(
-                formKey: _formKey,
-                emailController: _emailController,
-                passwordController: _passwordController,
-                onSubmit: _submit,
-              ),
+              child: authViewModel.isInitializing
+                  ? const CircularProgressIndicator()
+                  : _LoginCard(
+                      formKey: _formKey,
+                      emailController: _emailController,
+                      passwordController: _passwordController,
+                      onSubmit: _submit,
+                    ),
             ),
           ),
         ),
@@ -112,8 +127,8 @@ class _LoginCard extends StatelessWidget {
                 Text(
                   'admindoorstep',
                   style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                        fontWeight: FontWeight.w800,
-                      ),
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
                 const SizedBox(height: 8),
                 const Text(
@@ -123,16 +138,16 @@ class _LoginCard extends StatelessWidget {
                 Text(
                   'Quick actions',
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        fontWeight: FontWeight.w700,
-                        color: const Color(0xFF0F766E),
-                      ),
+                    fontWeight: FontWeight.w700,
+                    color: const Color(0xFF0F766E),
+                  ),
                 ),
                 const SizedBox(height: 24),
                 Text(
                   'Login',
                   style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                        fontWeight: FontWeight.w800,
-                      ),
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
                 const SizedBox(height: 8),
                 const Text('Use your email and password to continue.'),
@@ -155,9 +170,7 @@ class _LoginCard extends StatelessWidget {
                 TextFormField(
                   controller: passwordController,
                   obscureText: true,
-                  decoration: const InputDecoration(
-                    labelText: 'Password',
-                  ),
+                  decoration: const InputDecoration(labelText: 'Password'),
                   validator: (value) {
                     if (value == null || value.isEmpty) {
                       return 'Enter your password';

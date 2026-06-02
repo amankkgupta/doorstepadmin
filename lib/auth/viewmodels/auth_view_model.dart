@@ -41,8 +41,55 @@ class AuthViewModel extends ChangeNotifier {
     }
 
     _bootstrapped = true;
-    _isInitializing = false;
+    _isInitializing = true;
     notifyListeners();
+
+    try {
+      final authUser = Supabase.instance.client.auth.currentUser;
+      final email = authUser?.email?.trim().toLowerCase();
+      if (email == null || email.isEmpty) {
+        return;
+      }
+
+      final admin = await Supabase.instance.client
+          .from('admins')
+          .select()
+          .eq('email', email)
+          .maybeSingle();
+
+      if (admin == null) {
+        await Supabase.instance.client.auth.signOut();
+        return;
+      }
+
+      final adminId = _pickAdminId(admin);
+      _user = AdminSession(
+        id: adminId.isEmpty ? email : adminId,
+        email: (admin['email'] ?? email).toString(),
+        categoryId: admin['category_id'],
+      );
+
+      await _updateAndVerifyFCMTokenAfterSignIn(userId: _user!.id);
+    } on AuthException catch (error) {
+      _logger.warning(
+        'Admin session bootstrap auth failed',
+        data: {'error': error.message},
+      );
+    } on PostgrestException catch (error) {
+      _logger.warning(
+        'Admin session bootstrap query failed',
+        data: {'error': error.message, 'code': error.code},
+      );
+    } catch (error, stackTrace) {
+      _logger.error(
+        'Admin session bootstrap failed',
+        data: {'error': error.toString()},
+        stackTrace: stackTrace,
+      );
+    } finally {
+      _isInitializing = false;
+      notifyListeners();
+    }
   }
 
   Future<SignInResult> signInWithEmail({
