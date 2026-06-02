@@ -1,6 +1,12 @@
 import 'package:admindoorstep/app_constants.dart';
 import 'package:admindoorstep/app_routes.dart';
 import 'package:admindoorstep/providers.dart';
+import 'package:admindoorstep/services/notification_service.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:admindoorstep/app_logger.dart';
+import 'package:admindoorstep/firebase_options.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -13,7 +19,68 @@ Future<void> main() async {
     anonKey: AppConstants.supaBaseAnonKey,
   );
 
+  if (await _initializeFirebase()) {
+    // Register background message handler for FCM. This must be a top-level
+    // function and registered before background messages can be handled.
+    FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+
+    await NotificationService().initialize();
+  } else {
+    AppLogger().warning(
+      'Firebase Messaging skipped: Firebase options are not configured.',
+    );
+  }
+
   runApp(const AdminDoorstepApp());
+}
+
+@pragma('vm:entry-point')
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  if (!await _initializeFirebase()) {
+    return;
+  }
+
+  // Log background message
+  try {
+    AppLogger().info(
+      'FCM background message received',
+      data: {
+        'messageId': message.messageId,
+        'data': message.data,
+        'title': message.notification?.title,
+        'body': message.notification?.body,
+      },
+    );
+  } catch (_) {}
+}
+
+Future<bool> _initializeFirebase() async {
+  if (Firebase.apps.isNotEmpty) {
+    return true;
+  }
+
+  try {
+    if (DefaultFirebaseOptions.isConfigured) {
+      await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform,
+      );
+      return true;
+    }
+
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      await Firebase.initializeApp();
+      return true;
+    }
+  } catch (error, stackTrace) {
+    AppLogger().warning(
+      'Firebase initialization failed. Add android/app/google-services.json '
+      'or run flutterfire configure.',
+      data: {'error': error.toString(), 'stackTrace': stackTrace.toString()},
+    );
+    return false;
+  }
+
+  return false;
 }
 
 class AdminDoorstepApp extends StatelessWidget {
