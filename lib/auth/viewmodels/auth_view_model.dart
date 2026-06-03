@@ -45,6 +45,10 @@ class AuthViewModel extends ChangeNotifier {
     notifyListeners();
 
     try {
+      if (!_isSupabaseReady) {
+        return;
+      }
+
       final authUser = Supabase.instance.client.auth.currentUser;
       final email = authUser?.email?.trim().toLowerCase();
       if (email == null || email.isEmpty) {
@@ -158,6 +162,14 @@ class AuthViewModel extends ChangeNotifier {
     _errorMessage = null;
     notifyListeners();
 
+    final userId = _user?.id;
+    if (userId != null && userId.trim().isNotEmpty) {
+      await _fcmTokenRepository.updateFCMTokenActiveStatus(
+        userId: userId,
+        isActive: false,
+      );
+    }
+
     _user = null;
     try {
       await Supabase.instance.client.auth.signOut();
@@ -170,6 +182,18 @@ class AuthViewModel extends ChangeNotifier {
       _isLoading = false;
       notifyListeners();
     }
+  }
+
+  Future<void> updateCurrentUserActiveStatus({required bool isActive}) async {
+    final userId = _user?.id;
+    if (userId == null || userId.trim().isEmpty) {
+      return;
+    }
+
+    await _fcmTokenRepository.updateFCMTokenActiveStatus(
+      userId: userId,
+      isActive: isActive,
+    );
   }
 
   bool get _isSupabaseReady {

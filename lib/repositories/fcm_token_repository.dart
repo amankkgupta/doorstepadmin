@@ -19,6 +19,7 @@ class FCMTokenRepository {
         'user_id': userId,
         'fcmtoken': fcmToken,
         'created_at': now,
+        'is_active': true,
       }, onConflict: 'user_id');
 
       _logger.info('FCM token saved successfully', data: {'userId': userId});
@@ -33,6 +34,47 @@ class FCMTokenRepository {
       _logger.error(
         'Failed to save FCM token',
         data: {'userId': userId, 'error': e.toString()},
+        stackTrace: stackTrace,
+      );
+      return false;
+    }
+  }
+
+  Future<bool> updateFCMTokenActiveStatus({
+    required String userId,
+    required bool isActive,
+  }) async {
+    try {
+      _logger.info(
+        'Updating FCM token active status',
+        data: {'userId': userId, 'isActive': isActive},
+      );
+
+      await Supabase.instance.client
+          .from('fcmtokens')
+          .update({'is_active': isActive})
+          .eq('user_id', userId);
+
+      _logger.info(
+        'FCM token active status updated successfully',
+        data: {'userId': userId, 'isActive': isActive},
+      );
+      return true;
+    } on PostgrestException catch (e) {
+      _logger.error(
+        'Failed to update FCM token active status (PostgrestException)',
+        data: {
+          'userId': userId,
+          'isActive': isActive,
+          'error': e.message,
+          'code': e.code,
+        },
+      );
+      return false;
+    } catch (e, stackTrace) {
+      _logger.error(
+        'Failed to update FCM token active status',
+        data: {'userId': userId, 'isActive': isActive, 'error': e.toString()},
         stackTrace: stackTrace,
       );
       return false;

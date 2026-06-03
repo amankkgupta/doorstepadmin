@@ -7,6 +7,7 @@ void main() {
     WidgetTester tester,
   ) async {
     await tester.pumpWidget(const AdminDoorstepApp());
+    await tester.pump();
 
     expect(find.text('admindoorstep'), findsWidgets);
     expect(

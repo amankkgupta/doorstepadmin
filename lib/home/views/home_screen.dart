@@ -1,16 +1,111 @@
 import 'package:admindoorstep/app_routes.dart';
 import 'package:admindoorstep/auth/viewmodels/auth_view_model.dart';
+import 'package:admindoorstep/chat/repositories/chat_repository.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  final ChatRepository _chatRepository = ChatRepository();
+  final SupabaseClient _client = Supabase.instance.client;
+  RealtimeChannel? _conversationChannel;
+  Object? _categoryId;
+  int _unreadChatCount = 0;
+  bool _isLoadingUnreadChatCount = false;
+  bool _hasSyncedUnreadCategory = false;
+
+  @override
+  void dispose() {
+    final channel = _conversationChannel;
+    if (channel != null) {
+      _client.removeChannel(channel);
+    }
+    super.dispose();
+  }
+
+  void _syncUnreadChatCount(dynamic categoryId) {
+    if (_hasSyncedUnreadCategory && _categoryId == categoryId) {
+      return;
+    }
+
+    _hasSyncedUnreadCategory = true;
+    _categoryId = categoryId;
+    _loadUnreadChatCount();
+    _subscribeToConversationChanges(categoryId);
+  }
+
+  Future<void> _loadUnreadChatCount() async {
+    if (_isLoadingUnreadChatCount) {
+      return;
+    }
+
+    _isLoadingUnreadChatCount = true;
+    try {
+      final count = await _chatRepository.fetchSupportUnreadTotal(
+        categoryId: _categoryId,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _unreadChatCount = count;
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _unreadChatCount = 0;
+      });
+    } finally {
+      _isLoadingUnreadChatCount = false;
+    }
+  }
+
+  void _subscribeToConversationChanges(dynamic categoryId) {
+    final existingChannel = _conversationChannel;
+    if (existingChannel != null) {
+      _client.removeChannel(existingChannel);
+    }
+
+    final channel = _client.channel('home-chat-unread-${categoryId ?? 'all'}');
+    _conversationChannel = categoryId == null
+        ? channel
+              .onPostgresChanges(
+                event: PostgresChangeEvent.all,
+                schema: 'public',
+                table: 'conversations',
+                callback: (_) => _loadUnreadChatCount(),
+              )
+              .subscribe()
+        : channel
+              .onPostgresChanges(
+                event: PostgresChangeEvent.all,
+                schema: 'public',
+                table: 'conversations',
+                filter: PostgresChangeFilter(
+                  type: PostgresChangeFilterType.eq,
+                  column: 'category_id',
+                  value: categoryId,
+                ),
+                callback: (_) => _loadUnreadChatCount(),
+              )
+              .subscribe();
+  }
 
   @override
   Widget build(BuildContext context) {
     return Consumer<AuthViewModel>(
       builder: (context, authViewModel, _) {
         final email = authViewModel.user?.email ?? 'Signed in user';
+        _syncUnreadChatCount(authViewModel.user?.categoryId);
 
         return Scaffold(
           appBar: AppBar(
@@ -78,11 +173,16 @@ class HomeScreen extends StatelessWidget {
                               title: 'Chats',
                               description:
                                   'Open support and customer conversations.',
-                              onTap: () {
-                                Navigator.pushNamed(
+                              badgeCount: _unreadChatCount,
+                              onTap: () async {
+                                await Navigator.pushNamed(
                                   context,
                                   AppRoutes.supportInbox,
                                 );
+                                if (!context.mounted) {
+                                  return;
+                                }
+                                _loadUnreadChatCount();
                               },
                             ),
                             _FeatureCard(
@@ -132,6 +232,7 @@ class _FeatureCard extends StatelessWidget {
     required this.icon,
     required this.title,
     required this.description,
+    this.badgeCount = 0,
     this.onTap,
   });
 
@@ -139,6 +240,7 @@ class _FeatureCard extends StatelessWidget {
   final IconData icon;
   final String title;
   final String description;
+  final int badgeCount;
   final VoidCallback? onTap;
 
   @override
@@ -165,13 +267,24 @@ class _FeatureCard extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFE6FFFA),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Icon(icon, color: const Color(0xFF0F766E)),
+              Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFE6FFFA),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Icon(icon, color: const Color(0xFF0F766E)),
+                  ),
+                  if (badgeCount > 0)
+                    Positioned(
+                      right: -8,
+                      top: -8,
+                      child: _UnreadBadge(count: badgeCount),
+                    ),
+                ],
               ),
               const SizedBox(height: 18),
               Text(
@@ -190,6 +303,34 @@ class _FeatureCard extends StatelessWidget {
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _UnreadBadge extends StatelessWidget {
+  const _UnreadBadge({required this.count});
+
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = count > 99 ? '99+' : count.toString();
+
+    return Container(
+      constraints: const BoxConstraints(minWidth: 26, minHeight: 22),
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+      decoration: BoxDecoration(
+        color: const Color(0xFFDC2626),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        textAlign: TextAlign.center,
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+          color: Colors.white,
+          fontWeight: FontWeight.w800,
         ),
       ),
     );

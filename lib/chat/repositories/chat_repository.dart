@@ -44,6 +44,29 @@ class ChatRepository {
         .toList();
   }
 
+  Future<int> fetchSupportUnreadTotal({required dynamic categoryId}) async {
+    try {
+      var query = _client.from('conversations').select('support_unread');
+
+      if (categoryId != null) {
+        query = query.eq('category_id', categoryId);
+      }
+
+      final rows = await query;
+      return List<Map<String, dynamic>>.from(rows).fold<int>(
+        0,
+        (total, row) =>
+            total +
+            (int.tryParse((row['support_unread'] ?? 0).toString()) ?? 0),
+      );
+    } on PostgrestException {
+      rethrow;
+    } catch (error) {
+      debugPrint('Fetch support unread total failed: $error');
+      throw Exception('Unable to fetch unread chat count.');
+    }
+  }
+
   Future<ConversationSummary?> fetchConversationSummary({
     required String conversationId,
     required dynamic categoryId,

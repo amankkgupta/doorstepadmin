@@ -341,24 +341,26 @@ class _ConversationTile extends StatelessWidget {
                       context,
                     ).textTheme.bodySmall?.copyWith(color: Colors.black54),
                   ),
-                  const SizedBox(height: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF0F766E),
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                    child: Text(
-                      '${conversation.supportUnread}',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w700,
+                  if (conversation.supportUnread > 0) ...[
+                    const SizedBox(height: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF0F766E),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(
+                        '${conversation.supportUnread}',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                     ),
-                  ),
+                  ],
                 ],
               ),
             ],

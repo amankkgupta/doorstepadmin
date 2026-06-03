@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:admindoorstep/app_constants.dart';
 import 'package:admindoorstep/app_routes.dart';
+import 'package:admindoorstep/auth/viewmodels/auth_view_model.dart';
 import 'package:admindoorstep/providers.dart';
 import 'package:admindoorstep/services/notification_service.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -90,20 +93,76 @@ class AdminDoorstepApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MultiProvider(
       providers: AppProviders.providers,
-      child: MaterialApp(
-        debugShowCheckedModeBanner: false,
-        title: 'admindoorstep',
-        theme: ThemeData(
-          useMaterial3: true,
-          colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF0F766E)),
-          scaffoldBackgroundColor: const Color(0xFFF3F7F6),
-          inputDecorationTheme: const InputDecorationTheme(
-            border: OutlineInputBorder(),
-          ),
+      child: _AdminActiveStatusTracker(
+        child: MaterialApp(
+          debugShowCheckedModeBanner: false,
+          title: 'admindoorstep',
+          theme: _AppTheme.theme,
+          initialRoute: AppRoutes.login,
+          routes: AppRoutes.routes,
         ),
-        initialRoute: AppRoutes.login,
-        routes: AppRoutes.routes,
       ),
     );
+  }
+}
+
+class _AppTheme {
+  static final theme = ThemeData(
+    useMaterial3: true,
+    colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF0F766E)),
+    scaffoldBackgroundColor: const Color(0xFFF3F7F6),
+    inputDecorationTheme: const InputDecorationTheme(
+      border: OutlineInputBorder(),
+    ),
+  );
+}
+
+class _AdminActiveStatusTracker extends StatefulWidget {
+  const _AdminActiveStatusTracker({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_AdminActiveStatusTracker> createState() =>
+      _AdminActiveStatusTrackerState();
+}
+
+class _AdminActiveStatusTrackerState extends State<_AdminActiveStatusTracker>
+    with WidgetsBindingObserver {
+  late final AuthViewModel _authViewModel;
+
+  @override
+  void initState() {
+    super.initState();
+    _authViewModel = context.read<AuthViewModel>();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    switch (state) {
+      case AppLifecycleState.resumed:
+        unawaited(_authViewModel.updateCurrentUserActiveStatus(isActive: true));
+      case AppLifecycleState.hidden:
+      case AppLifecycleState.paused:
+      case AppLifecycleState.detached:
+        unawaited(
+          _authViewModel.updateCurrentUserActiveStatus(isActive: false),
+        );
+      case AppLifecycleState.inactive:
+        break;
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    unawaited(_authViewModel.updateCurrentUserActiveStatus(isActive: false));
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return widget.child;
   }
 }
