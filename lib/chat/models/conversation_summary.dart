@@ -2,6 +2,7 @@ class ConversationSummary {
   const ConversationSummary({
     required this.conversationId,
     required this.userId,
+    required this.categoryId,
     required this.messageId,
     required this.supportUnread,
     required this.modifiedAt,
@@ -12,6 +13,7 @@ class ConversationSummary {
 
   final String conversationId;
   final String userId;
+  final String categoryId;
   final String messageId;
   final int supportUnread;
   final DateTime? modifiedAt;
@@ -27,6 +29,7 @@ class ConversationSummary {
     return ConversationSummary(
       conversationId: conversationId,
       userId: userId,
+      categoryId: categoryId,
       messageId: messageId,
       supportUnread: supportUnread ?? this.supportUnread,
       modifiedAt: modifiedAt ?? this.modifiedAt,

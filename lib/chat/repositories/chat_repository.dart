@@ -80,7 +80,7 @@ class ChatRepository {
       var query = _client
           .from('conversations')
           .select(
-            'conversation_id, user_id, message_id, support_unread, modified_at',
+            'conversation_id, user_id, category_id, message_id, support_unread, modified_at',
           )
           .eq('conversation_id', normalizedConversationId);
 
@@ -123,7 +123,7 @@ class ChatRepository {
       var query = _client
           .from('conversations')
           .select(
-            'conversation_id, user_id, message_id, support_unread, modified_at',
+            'conversation_id, user_id, category_id, message_id, support_unread, modified_at',
           );
 
       if (categoryId != null) {
@@ -157,6 +157,7 @@ class ChatRepository {
     return ConversationSummary(
       conversationId: (row['conversation_id'] ?? '').toString(),
       userId: userId,
+      categoryId: (row['category_id'] ?? '').toString(),
       messageId: messageId,
       supportUnread: int.tryParse((row['support_unread'] ?? 0).toString()) ?? 0,
       modifiedAt: DateTime.tryParse((row['modified_at'] ?? '').toString()),

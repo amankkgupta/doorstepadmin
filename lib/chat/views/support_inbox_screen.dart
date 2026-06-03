@@ -320,6 +320,16 @@ class _ConversationTile extends StatelessWidget {
                         ).textTheme.bodySmall?.copyWith(color: Colors.black54),
                       ),
                     ],
+                    if (conversation.categoryId.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        'Category ID: ${conversation.categoryId}',
+                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                          color: const Color(0xFF0F766E),
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 8),
                     Text(
                       conversation.latestMessagePreview.isEmpty
